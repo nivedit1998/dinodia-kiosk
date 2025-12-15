@@ -9,6 +9,7 @@ import {
   FlatList,
   Modal,
   Pressable,
+  type DimensionValue,
 } from 'react-native';
 import type { UIDevice } from '../models/device';
 import { normalizeLabel } from '../utils/deviceLabels';
@@ -28,6 +29,7 @@ import {
 } from '../utils/deviceSections';
 import { HeaderMenu } from '../components/HeaderMenu';
 import { SpotifyCard } from '../components/SpotifyCard';
+import { RingDoorbellCard } from '../components/RingDoorbellCard';
 import { loadJson, saveJson } from '../utils/storage';
 import type { Role } from '../models/roles';
 import { useSession } from '../store/sessionStore';
@@ -198,7 +200,7 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
     ({ item }: { item: LayoutRow }) => (
       <View style={styles.deviceRow}>
         {item.sections.map((section) => {
-          const sectionWidth = `${section.span * 25}%`;
+          const sectionWidth: DimensionValue = `${section.span * 25}%`;
           return (
             <View key={section.key} style={[styles.sectionContainer, { width: sectionWidth }]}>
               <View style={styles.sectionHeader}>
@@ -211,7 +213,8 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
                 {section.devices.map((device) => {
                   const size: DeviceCardSize = getDeviceLayoutSize(device);
                   const { width: widthUnits, height: heightUnits } = getDeviceDimensions(size);
-                  const widthPercent = `${Math.min(100, (widthUnits / section.span) * 100)}%`;
+                  const widthPercent: DimensionValue =
+                    `${Math.min(100, (widthUnits / section.span) * 100)}%`;
                   const minHeight = CARD_BASE_ROW_HEIGHT * heightUnits;
                   return (
                     <View
@@ -228,6 +231,17 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
                     </View>
                   );
                 })}
+
+                {section.title === 'Doorbell' && (
+                  <View
+                    style={[
+                      styles.cardWrapper,
+                      { width: section.span > 1 ? '50%' : '100%', minHeight: CARD_BASE_ROW_HEIGHT },
+                    ]}
+                  >
+                    <RingDoorbellCard />
+                  </View>
+                )}
               </View>
             </View>
           );

@@ -25,7 +25,7 @@ export const DeviceCard = memo(function DeviceCard({
 }: Props) {
   const label = getPrimaryLabel(device);
   const { session, haMode } = useSession();
-  const [pending, setPending] = useState(false);
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const connection = session.haConnection;
   const baseUrlRaw = haMode === 'cloud' ? connection?.cloudUrl ?? '' : connection?.baseUrl ?? '';
   const baseUrl = baseUrlRaw.trim().replace(/\/+$/, '');
@@ -41,6 +41,12 @@ export const DeviceCard = memo(function DeviceCard({
   const preset = useMemo(() => getDevicePreset(label), [label]);
   const active = useMemo(() => isDeviceActive(label, device), [label, device]);
   const secondaryText = useMemo(() => getSecondaryLine(device), [device]);
+  const attrs = device.attributes ?? {};
+  const blindPosition =
+    label === 'Blind' ? getBlindPosition(attrs as Record<string, unknown>) : null;
+  const hasPending = pendingCommand !== null;
+  const openPending = pendingCommand === 'blind/open';
+  const closePending = pendingCommand === 'blind/close';
 
   const sizeStyles =
     size === 'small'
@@ -63,8 +69,7 @@ export const DeviceCard = memo(function DeviceCard({
       ? { fontSize: 12 }
       : { fontSize: 13 };
 
-  async function onPrimaryPress() {
-    if (!primaryAction) return;
+  async function sendCommand(command: string, value?: number) {
     if (!ha) {
       Alert.alert(
         'Almost there',
@@ -74,14 +79,14 @@ export const DeviceCard = memo(function DeviceCard({
       );
       return;
     }
-    if (pending) return;
-    setPending(true);
+    if (pendingCommand) return;
+    setPendingCommand(command);
     try {
       await handleDeviceCommand({
         ha,
         entityId: device.entityId,
-        command: primaryAction.command,
-        value: primaryAction.value,
+        command,
+        value,
       });
       if (onAfterCommand) await Promise.resolve(onAfterCommand());
     } catch (err) {
@@ -96,7 +101,7 @@ export const DeviceCard = memo(function DeviceCard({
           : 'We could not send that to your Dinodia Hub. Please try again.'
       );
     } finally {
-      setPending(false);
+      setPendingCommand(null);
     }
   }
 
@@ -109,11 +114,18 @@ export const DeviceCard = memo(function DeviceCard({
       style={[
         styles.card,
         sizeStyles,
-        {
-          backgroundColor: active ? preset.gradient[0] : preset.inactiveBackground,
-          borderColor: active ? 'rgba(0,0,0,0.08)' : '#e5e7eb',
-          opacity: active ? 1 : 0.9,
-        },
+        (() => {
+          const baseBg = active ? preset.gradient[0] : preset.inactiveBackground;
+          const bg =
+            label === 'Blind' && blindPosition !== null
+              ? mixColors(preset.inactiveBackground, preset.accent[0], blindPosition / 100)
+              : baseBg;
+          return {
+            backgroundColor: bg,
+            borderColor: active ? 'rgba(0,0,0,0.08)' : '#e5e7eb',
+            opacity: label === 'Blind' && blindPosition !== null ? 1 : active ? 1 : 0.9,
+          };
+        })(),
       ]}
     >
       <View style={styles.topRow}>
@@ -129,28 +141,71 @@ export const DeviceCard = memo(function DeviceCard({
         >
           {secondaryText}
         </Text>
-        {primaryAction && (
-          <TouchableOpacity
-            onPress={onPrimaryPress}
-            activeOpacity={0.85}
-            disabled={pending}
-            style={[
-              styles.primaryActionButton,
-              { backgroundColor: active ? preset.iconActiveBackground : '#111827' },
-              pending && styles.primaryActionButtonDisabled,
-            ]}
-          >
-            {pending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <View style={styles.primaryActionContent}>
-                <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
-                <Text style={styles.primaryActionText}>
-                  {primaryActionLabel(label, device)}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
+        {label === 'Blind' ? (
+          <View style={styles.blindActionsRow}>
+            <TouchableOpacity
+              onPress={() => sendCommand('blind/open')}
+              activeOpacity={0.85}
+              disabled={hasPending || blindPosition === 100}
+              style={[
+                styles.secondaryActionButton,
+                {
+                  backgroundColor: active ? preset.iconActiveBackground : '#111827',
+                  opacity:
+                    blindPosition === 100 ? 0.35 : openPending ? 0.6 : 1,
+                },
+              ]}
+            >
+              {openPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>Open</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => sendCommand('blind/close')}
+              activeOpacity={0.85}
+              disabled={hasPending || blindPosition === 0}
+              style={[
+                styles.secondaryActionButton,
+                {
+                  backgroundColor: active ? preset.iconActiveBackground : '#111827',
+                  opacity:
+                    blindPosition === 0 ? 0.35 : closePending ? 0.6 : 1,
+                },
+              ]}
+            >
+              {closePending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>Close</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          primaryAction && (
+            <TouchableOpacity
+              onPress={() => sendCommand(primaryAction.command, primaryAction.value)}
+              activeOpacity={0.85}
+              disabled={hasPending}
+              style={[
+                styles.primaryActionButton,
+                { backgroundColor: active ? preset.iconActiveBackground : '#111827' },
+                hasPending && styles.primaryActionButtonDisabled,
+              ]}
+            >
+              {hasPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <View style={styles.primaryActionContent}>
+                  <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
+                  <Text style={styles.primaryActionText}>
+                    {primaryActionLabel(label, device)}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )
         )}
       </View>
     </TouchableOpacity>
@@ -237,6 +292,10 @@ function getSecondaryLine(device: UIDevice): string {
     if (typeof target === 'number') return `Target ${target}°`;
   }
   if (label === 'Blind') {
+    const pos = getBlindPosition(attrs);
+    if (pos !== null) return `Position ${pos}%`;
+    const s = state.toLowerCase();
+    if (s === 'stop' || s === 'stopped') return 'Idle';
     return state || 'Idle';
   }
   if (label === 'Motion Sensor') {
@@ -244,6 +303,61 @@ function getSecondaryLine(device: UIDevice): string {
     return active ? 'Motion detected' : 'No motion';
   }
   return state || 'Unknown';
+}
+
+function getBlindPosition(attrs: Record<string, unknown>): number | null {
+  const candidates = ['blind_position', 'position', 'current_position', 'position_percent'];
+  for (const key of candidates) {
+    const raw = (attrs as Record<string, unknown>)[key];
+    if (typeof raw === 'number') {
+      return Math.round(raw);
+    }
+    if (typeof raw === 'string') {
+      const n = Number(raw);
+      if (!Number.isNaN(n)) {
+        return Math.round(n);
+      }
+    }
+  }
+  return null;
+}
+
+function mixColors(from: string, to: string, t: number): string {
+  const a = hexToRgb(from);
+  const b = hexToRgb(to);
+  if (!a || !b) return from;
+  const ratio = Math.min(1, Math.max(0, t));
+  const r = Math.round(a.r + (b.r - a.r) * ratio);
+  const g = Math.round(a.g + (b.g - a.g) * ratio);
+  const bb = Math.round(a.b + (b.b - a.b) * ratio);
+  return rgbToHex(r, g, bb);
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const cleaned = hex.replace('#', '');
+  if (cleaned.length === 3) {
+    const r = parseInt(cleaned[0] + cleaned[0], 16);
+    const g = parseInt(cleaned[1] + cleaned[1], 16);
+    const b = parseInt(cleaned[2] + cleaned[2], 16);
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return null;
+    return { r, g, b };
+  }
+  if (cleaned.length === 6) {
+    const r = parseInt(cleaned.slice(0, 2), 16);
+    const g = parseInt(cleaned.slice(2, 4), 16);
+    const b = parseInt(cleaned.slice(4, 6), 16);
+    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return null;
+    return { r, g, b };
+  }
+  return null;
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const toHex = (value: number) => {
+    const clamped = Math.min(255, Math.max(0, value));
+    return clamped.toString(16).padStart(2, '0');
+  };
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
 const styles = StyleSheet.create({
@@ -289,6 +403,24 @@ const styles = StyleSheet.create({
   },
   primaryActionButtonDisabled: {
     opacity: 0.6,
+  },
+  blindActionsRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    columnGap: 8,
+  },
+  secondaryActionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   primaryActionText: {
     fontSize: 14,

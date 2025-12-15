@@ -599,7 +599,31 @@ function getSecondaryLine(device: UIDevice): string {
     if (typeof attrs.media_title === 'string') return attrs.media_title;
     return state === 'playing' ? 'Playing' : state === 'paused' ? 'Paused' : state;
   }
+  if (label === 'Blind') {
+    const pos = getBlindPosition(attrs);
+    if (pos !== null) return `Position ${pos}%`;
+    const s = state.toLowerCase();
+    if (s === 'stop' || s === 'stopped') return '';
+    return state;
+  }
   return state;
+}
+
+function getBlindPosition(attrs: Record<string, unknown>): number | null {
+  const candidates = ['blind_position', 'position', 'current_position', 'position_percent'];
+  for (const key of candidates) {
+    const raw = (attrs as Record<string, unknown>)[key];
+    if (typeof raw === 'number') {
+      return Math.round(raw);
+    }
+    if (typeof raw === 'string') {
+      const n = Number(raw);
+      if (!Number.isNaN(n)) {
+        return Math.round(n);
+      }
+    }
+  }
+  return null;
 }
 
 function formatSensorValue(sensor: UIDevice): string {

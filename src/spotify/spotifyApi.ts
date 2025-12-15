@@ -28,8 +28,8 @@ export type SpotifyPlaybackState = {
 const TOKENS_STORAGE_KEY = 'spotify_tokens_v1';
 
 // Replace these placeholders in production with your real values.
-export const SPOTIFY_CLIENT_ID = '9e88d4fb6e0c44049242fac02aaddea0';
-export const SPOTIFY_REDIRECT_URI = 'dinodia://spotify-auth';
+export const SPOTIFY_CLIENT_ID: string = '9e88d4fb6e0c44049242fac02aaddea0';
+export const SPOTIFY_REDIRECT_URI: string = 'dinodia://spotify-auth';
 export const SPOTIFY_SCOPES = [
   'user-read-playback-state',
   'user-modify-playback-state',
