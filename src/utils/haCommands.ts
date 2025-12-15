@@ -41,12 +41,24 @@ export async function handleDeviceCommand(params: {
       });
       break;
     case 'blind/open':
-      // Use Home Assistant script for smart open; blinds can take ~30s, so increase timeout.
-      await callHaService(ha, 'script', 'blind_5_smart_open', {}, 40000);
+      // Mirror web: call script.turn_on on script.openblind; long timeout for ~30s travel.
+      await callHaService(
+        ha,
+        'script',
+        'turn_on',
+        { entity_id: 'script.openblind' },
+        40000
+      );
       break;
     case 'blind/close':
-      // Use Home Assistant script for smart close; blinds can take ~30s, so increase timeout.
-      await callHaService(ha, 'script', 'blind_5_smart_close', {}, 40000);
+      // Mirror web: call script.turn_on on script.closeblind; long timeout for ~30s travel.
+      await callHaService(
+        ha,
+        'script',
+        'turn_on',
+        { entity_id: 'script.closeblind' },
+        40000
+      );
       break;
     case 'media/play_pause':
       await callHaService(
