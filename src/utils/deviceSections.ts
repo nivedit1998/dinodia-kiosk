@@ -70,6 +70,14 @@ export function buildDeviceSections(devices: UIDevice[]): DeviceSection[] {
     sections.push({ title: label, data: rows });
   }
 
+  const hasDoorbell = sections.some((section) => section.title === 'Doorbell');
+  if (!hasDoorbell) {
+    sections.push({
+      title: 'Doorbell',
+      data: [{ key: 'doorbell-placeholder', devices: [] }],
+    });
+  }
+
   return sections;
 }
 

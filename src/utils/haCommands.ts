@@ -41,10 +41,12 @@ export async function handleDeviceCommand(params: {
       });
       break;
     case 'blind/open':
-      await callHaService(ha, 'cover', 'open_cover', { entity_id: entityId });
+      // Use Home Assistant script for smart open
+      await callHaService(ha, 'script', 'blind_5_smart_open', {});
       break;
     case 'blind/close':
-      await callHaService(ha, 'cover', 'close_cover', { entity_id: entityId });
+      // Use Home Assistant script for smart close
+      await callHaService(ha, 'script', 'blind_5_smart_close', {});
       break;
     case 'media/play_pause':
       await callHaService(
