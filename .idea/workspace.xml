@@ -5,11 +5,15 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="0a9d71a4-99eb-45c0-bc58-03e4bcdc96e5" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/api/dinodia.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/dinodia.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/api/deviceControl.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/api/deviceControl.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/components/DeviceCard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/components/DeviceCard.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/components/DeviceDetail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/components/DeviceDetail.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/models/device.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/device.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/env.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/env.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/navigation/AdminNavigator.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/navigation/AdminNavigator.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/navigation/AppNavigator.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/navigation/AppNavigator.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/navigation/TenantNavigator.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/navigation/TenantNavigator.tsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/utils/haCommands.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/haCommands.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />

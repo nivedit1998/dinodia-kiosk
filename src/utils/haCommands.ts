@@ -7,13 +7,16 @@ export const NUMERIC_COMMANDS = new Set<string>([
   'blind/set_position',
 ]);
 
-export async function handleDeviceCommand(params: {
-  ha: HaConnectionLike;
-  entityId: string;
-  command: string;
-  value?: number;
-  blindTravelSeconds?: number | null;
-}) {
+export async function handleDeviceCommand(
+  params: {
+    ha: HaConnectionLike;
+    entityId: string;
+    command: string;
+    value?: number;
+    blindTravelSeconds?: number | null;
+  },
+  allowHomeassistantFallback = false
+) {
   const { ha, entityId, command, value } = params;
 
   if (NUMERIC_COMMANDS.has(command) && typeof value !== 'number') {
@@ -26,13 +29,31 @@ export async function handleDeviceCommand(params: {
   const attrs = (state.attributes ?? {}) as Record<string, unknown>;
 
   switch (command) {
-    case 'light/toggle':
+    case 'light/toggle': {
+      const service = currentState === 'on' ? 'turn_off' : 'turn_on';
       if (domain === 'light') {
-        await callHaService(ha, 'light', currentState === 'on' ? 'turn_off' : 'turn_on', {
+        await callHaService(ha, 'light', service, { entity_id: entityId });
+      } else {
+        await callHaService(ha, 'homeassistant', 'toggle', { entity_id: entityId });
+      }
+      break;
+    }
+    case 'light/turn_on':
+      if (domain === 'light' || allowHomeassistantFallback) {
+        await callHaService(ha, domain === 'light' ? 'light' : 'homeassistant', 'turn_on', {
           entity_id: entityId,
         });
       } else {
-        await callHaService(ha, 'homeassistant', 'toggle', { entity_id: entityId });
+        await callHaService(ha, 'homeassistant', 'turn_on', { entity_id: entityId });
+      }
+      break;
+    case 'light/turn_off':
+      if (domain === 'light' || allowHomeassistantFallback) {
+        await callHaService(ha, domain === 'light' ? 'light' : 'homeassistant', 'turn_off', {
+          entity_id: entityId,
+        });
+      } else {
+        await callHaService(ha, 'homeassistant', 'turn_off', { entity_id: entityId });
       }
       break;
     case 'light/set_brightness':
@@ -117,6 +138,12 @@ export async function handleDeviceCommand(params: {
       });
       break;
     }
+    case 'boiler/set_temperature':
+      await callHaService(ha, 'climate', 'set_temperature', {
+        entity_id: entityId,
+        temperature: typeof value === 'number' ? value : undefined,
+      });
+      break;
     case 'tv/toggle_power':
     case 'speaker/toggle_power':
       await callHaService(
@@ -125,6 +152,14 @@ export async function handleDeviceCommand(params: {
         currentState === 'off' || currentState === 'standby' ? 'turn_on' : 'turn_off',
         { entity_id: entityId }
       );
+      break;
+    case 'tv/turn_on':
+    case 'speaker/turn_on':
+      await callHaService(ha, 'media_player', 'turn_on', { entity_id: entityId });
+      break;
+    case 'tv/turn_off':
+    case 'speaker/turn_off':
+      await callHaService(ha, 'media_player', 'turn_off', { entity_id: entityId });
       break;
     default:
       throw new Error(`Unsupported command ${command}`);

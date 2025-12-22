@@ -3,10 +3,16 @@ import React, { memo, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import type { UIDevice } from '../models/device';
 import { getPrimaryLabel } from '../utils/deviceLabels';
-import { handleDeviceCommand } from '../utils/haCommands';
-import { sendCloudDeviceCommand } from '../api/deviceControl';
+import {
+  getActionsForDevice,
+  pickPrimaryAction,
+  resolveToggleCommandForDevice,
+  type DeviceActionSpec,
+} from '../capabilities/deviceCapabilities';
+import { getBlindPosition, getBrightnessPct, getVolumePct } from '../capabilities/attributeReaders';
 import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
+import { executeDeviceCommand } from '../devices/deviceExecutor';
 
 export type DeviceCardSize = 'small' | 'medium' | 'large';
 
@@ -27,23 +33,14 @@ export const DeviceCard = memo(function DeviceCard({
   const label = getPrimaryLabel(device);
   const { session, haMode } = useSession();
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
-  const connection = session.haConnection;
-  const baseUrl = (connection?.baseUrl ?? '').trim().replace(/\/+$/, '');
-  const ha =
-    haMode === 'home' && baseUrl && connection
-      ? {
-          baseUrl,
-          longLivedToken: connection.longLivedToken,
-        }
-      : null;
 
-  const primaryAction = getPrimaryAction(label, device);
+  const actions = useMemo(() => getActionsForDevice(device, 'dashboard'), [device]);
+  const primaryAction = useMemo(() => pickPrimaryAction(device, 'dashboard'), [device]);
   const preset = useMemo(() => getDevicePreset(label), [label]);
   const active = useMemo(() => isDeviceActive(label, device), [label, device]);
   const secondaryText = useMemo(() => getSecondaryLine(device), [device]);
   const attrs = device.attributes ?? {};
-  const blindPosition =
-    label === 'Blind' ? getBlindPosition(attrs as Record<string, unknown>) : null;
+  const blindPosition = label === 'Blind' ? getBlindPosition(attrs as Record<string, unknown>) : null;
   const hasPending = pendingCommand !== null;
   const openPending = pendingCommand === 'blind/open';
   const closePending = pendingCommand === 'blind/close';
@@ -69,33 +66,20 @@ export const DeviceCard = memo(function DeviceCard({
       ? { fontSize: 12 }
       : { fontSize: 13 };
 
-  async function sendCommand(command: string, value?: number) {
+  async function sendAction(action: DeviceActionSpec, overrideValue?: number) {
     if (pendingCommand) return;
+    const resolved = resolveActionCommand(action, device, overrideValue);
+    if (!resolved) return;
+    const { command, value } = resolved;
     setPendingCommand(command);
     try {
-      if (haMode === 'cloud') {
-        await sendCloudDeviceCommand({
-          entityId: device.entityId,
-          command,
-          value,
-        });
-      } else {
-        if (!ha) {
-          Alert.alert(
-            'Almost there',
-            'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
-          );
-          return;
-        }
-
-        await handleDeviceCommand({
-          ha,
-          entityId: device.entityId,
-          command,
-          value,
-          blindTravelSeconds: device.blindTravelSeconds ?? null,
-        });
-      }
+      await executeDeviceCommand({
+        haMode,
+        connection: session.haConnection,
+        device,
+        command,
+        value,
+      });
       if (onAfterCommand) await Promise.resolve(onAfterCommand());
     } catch (err) {
       if (__DEV__) {
@@ -153,49 +137,37 @@ export const DeviceCard = memo(function DeviceCard({
         </Text>
         {label === 'Blind' ? (
           <View style={styles.blindActionsRow}>
-            <TouchableOpacity
-              onPress={() => sendCommand('blind/open')}
-              activeOpacity={0.85}
-              disabled={hasPending || blindPosition === 100}
-              style={[
-                styles.secondaryActionButton,
-                {
-                  backgroundColor: active ? preset.iconActiveBackground : '#111827',
-                  opacity:
-                    blindPosition === 100 ? 0.35 : openPending ? 0.6 : 1,
-                },
-              ]}
-            >
-              {openPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.primaryActionText}>Open</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => sendCommand('blind/close')}
-              activeOpacity={0.85}
-              disabled={hasPending || blindPosition === 0}
-              style={[
-                styles.secondaryActionButton,
-                {
-                  backgroundColor: active ? preset.iconActiveBackground : '#111827',
-                  opacity:
-                    blindPosition === 0 ? 0.35 : closePending ? 0.6 : 1,
-                },
-              ]}
-            >
-              {closePending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.primaryActionText}>Close</Text>
-              )}
-            </TouchableOpacity>
+            {getBlindActions(actions).map((action) => {
+              const isOpen = action.command === 'blind/open';
+              const disabled = hasPending || (isOpen ? blindPosition === 100 : blindPosition === 0);
+              const isPending = pendingCommand === action.command;
+              return (
+                <TouchableOpacity
+                  key={action.id}
+                  onPress={() => sendAction(action)}
+                  activeOpacity={0.85}
+                  disabled={disabled}
+                  style={[
+                    styles.secondaryActionButton,
+                    {
+                      backgroundColor: active ? preset.iconActiveBackground : '#111827',
+                      opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
+                    },
+                  ]}
+                >
+                  {isPending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryActionText}>{action.label}</Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         ) : (
           primaryAction && (
             <TouchableOpacity
-              onPress={() => sendCommand(primaryAction.command, primaryAction.value)}
+              onPress={() => sendAction(primaryAction)}
               activeOpacity={0.85}
               disabled={hasPending}
               style={[
@@ -209,9 +181,7 @@ export const DeviceCard = memo(function DeviceCard({
               ) : (
                 <View style={styles.primaryActionContent}>
                   <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
-                  <Text style={styles.primaryActionText}>
-                    {primaryActionLabel(label, device)}
-                  </Text>
+                  <Text style={styles.primaryActionText}>{primaryActionLabel(primaryAction, device)}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -222,55 +192,20 @@ export const DeviceCard = memo(function DeviceCard({
   );
 });
 
-type PrimaryAction = { command: string; value?: number } | null;
-
-function getPrimaryAction(label: string, device: UIDevice): PrimaryAction {
-  switch (label) {
-    case 'Light':
-      return { command: 'light/toggle' };
-    case 'Blind': {
-      const normalized = device.state.toLowerCase();
-      const isOpen = normalized === 'open' || normalized === 'opening' || normalized === 'on';
-      return { command: isOpen ? 'blind/close' : 'blind/open' };
-    }
-    case 'Spotify':
-      return { command: 'media/play_pause' };
-    case 'TV':
-      return { command: 'tv/toggle_power' };
-    case 'Speaker':
-      return { command: 'speaker/toggle_power' };
-    default:
-      return null;
+function primaryActionLabel(action: DeviceActionSpec, device: UIDevice): string {
+  const label = getPrimaryLabel(device);
+  if (action.kind === 'toggle') {
+    const state = (device.state ?? '').toString().toLowerCase();
+    const isOn = state === 'on' || state === 'playing';
+    return isOn ? `Turn off ${label.toLowerCase()}` : `Turn on ${label.toLowerCase()}`;
   }
-}
-
-function primaryActionLabel(label: string, device: UIDevice): string {
-  switch (label) {
-    case 'Light':
-      return 'Toggle light';
-    case 'Blind': {
-      const state = (device.state ?? '').toString().toLowerCase();
-      const isOpen = state === 'open' || state === 'opening' || state === 'on';
-      return isOpen ? 'Close blinds' : 'Open blinds';
-    }
-    case 'Spotify': {
-      const state = (device.state ?? '').toString().toLowerCase();
-      const isPlaying = state === 'playing';
-      return isPlaying ? 'Pause' : 'Play';
-    }
-    case 'TV': {
-      const state = (device.state ?? '').toString().toLowerCase();
-      const isOn = state === 'on';
-      return isOn ? 'Turn off TV' : 'Turn on TV';
-    }
-    case 'Speaker': {
-      const state = (device.state ?? '').toString().toLowerCase();
-      const isOn = state === 'on' || state === 'playing';
-      return isOn ? 'Turn off speaker' : 'Turn on speaker';
-    }
-    default:
-      return 'Action';
+  if (action.kind === 'button' || action.kind === 'fixed') {
+    return action.label;
   }
+  if (action.kind === 'slider') {
+    return action.label;
+  }
+  return 'Action';
 }
 
 function getSecondaryLine(device: UIDevice): string {
@@ -278,12 +213,7 @@ function getSecondaryLine(device: UIDevice): string {
   const attrs = device.attributes ?? {};
   const label = getPrimaryLabel(device);
   if (label === 'Light') {
-    const pct =
-      typeof attrs.brightness_pct === 'number'
-        ? Math.round(attrs.brightness_pct)
-        : typeof attrs.brightness === 'number'
-        ? Math.round((attrs.brightness / 255) * 100)
-        : null;
+    const pct = getBrightnessPct(attrs);
     if (pct !== null) return `${pct}% brightness`;
     return state === 'on' ? 'On' : 'Off';
   }
@@ -294,8 +224,8 @@ function getSecondaryLine(device: UIDevice): string {
     return state === 'playing' ? 'Playing' : state === 'paused' ? 'Paused' : state;
   }
   if (label === 'Boiler') {
-    const target = attrs.temperature ?? attrs.target_temp;
-    const current = attrs.current_temperature;
+    const target = attrs.temperature ?? (attrs as any).target_temp;
+    const current = (attrs as any).current_temperature;
     if (typeof target === 'number' && typeof current === 'number') {
       return `Target ${target}° • Now ${current}°`;
     }
@@ -315,21 +245,42 @@ function getSecondaryLine(device: UIDevice): string {
   return state || 'Unknown';
 }
 
-function getBlindPosition(attrs: Record<string, unknown>): number | null {
-  const candidates = ['blind_position', 'position', 'current_position', 'position_percent'];
-  for (const key of candidates) {
-    const raw = (attrs as Record<string, unknown>)[key];
-    if (typeof raw === 'number') {
-      return Math.round(raw);
-    }
-    if (typeof raw === 'string') {
-      const n = Number(raw);
-      if (!Number.isNaN(n)) {
-        return Math.round(n);
-      }
-    }
+function resolveActionCommand(
+  action: DeviceActionSpec,
+  device: UIDevice,
+  overrideValue?: number
+): { command: string; value?: number } | null {
+  if (action.kind === 'toggle') {
+    return { command: resolveToggleCommandForDevice(action, device) };
+  }
+  if (action.kind === 'button') {
+    return { command: action.command, value: overrideValue ?? action.value };
+  }
+  if (action.kind === 'fixed') {
+    return { command: action.command, value: action.value };
+  }
+  if (action.kind === 'slider') {
+    const attrs = device.attributes ?? {};
+    const volume = getVolumePct(attrs) ?? 0;
+    const brightness = getBrightnessPct(attrs) ?? 0;
+    const blind = getBlindPosition(attrs) ?? 0;
+    const defaultValue = labelDefaultForSlider(action.id, volume, brightness, blind);
+    return { command: action.command, value: overrideValue ?? defaultValue ?? 0 };
   }
   return null;
+}
+
+function labelDefaultForSlider(id: string, volume: number, brightness: number, blind: number) {
+  if (id.includes('volume')) return volume;
+  if (id.includes('brightness')) return brightness;
+  if (id.includes('position')) return blind;
+  return null;
+}
+
+function getBlindActions(actions: DeviceActionSpec[]) {
+  return actions.filter(
+    (a) => a.kind === 'fixed' && (a.command === 'blind/open' || a.command === 'blind/close')
+  ) as Extract<DeviceActionSpec, { kind: 'fixed' }>[];
 }
 
 function mixColors(from: string, to: string, t: number): string {

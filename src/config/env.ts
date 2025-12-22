@@ -5,5 +5,5 @@ export const ENV = {
   // Optional: if you expose an auth RPC or Edge Function instead of raw tables:
   AUTH_BASE_URL: 'https://zigdlyejwcevrolvnpng.supabase.co/functions/v1',
   // Optional: URL of dinodia-platform (Next.js) deployment to proxy monitoring history
-  DINODIA_PLATFORM_API: '',
+  DINODIA_PLATFORM_API: 'https://app.dinodiasmartliving.com',
 };

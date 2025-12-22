@@ -15,10 +15,20 @@ import Slider from '@react-native-community/slider';
 import type { UIDevice } from '../models/device';
 import { fetchSensorHistoryForCurrentUser, HistoryPoint } from '../api/monitoringHistory';
 import { getPrimaryLabel } from '../utils/deviceLabels';
-import { handleDeviceCommand } from '../utils/haCommands';
-import { sendCloudDeviceCommand } from '../api/deviceControl';
+import {
+  getActionsForDevice,
+  type DeviceActionSpec,
+  resolveToggleCommandForDevice,
+} from '../capabilities/deviceCapabilities';
+import {
+  getBlindPosition,
+  getBrightnessPct,
+  getTargetTemperature,
+  getVolumePct,
+} from '../capabilities/attributeReaders';
 import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
+import { executeDeviceCommand } from '../devices/deviceExecutor';
 
 type Props = {
   device: UIDevice | null;
@@ -52,16 +62,6 @@ export function DeviceDetail({
 
   const connection = session.haConnection;
 
-  const ha = device && connection
-    ? (() => {
-        const rawUrl =
-          haMode === 'cloud' ? connection.cloudUrl ?? '' : connection.baseUrl ?? '';
-        const cleaned = rawUrl.trim().replace(/\/+$/, '');
-        if (!cleaned) return null;
-        return { baseUrl: cleaned, longLivedToken: connection.longLivedToken };
-      })()
-    : null;
-
   useEffect(() => {
     if (label === 'Doorbell' || label === 'Home Security') {
       const id = setInterval(() => setCameraRefreshToken(Date.now()), 15000);
@@ -71,9 +71,9 @@ export function DeviceDetail({
   }, [label]);
 
   const buildCameraUrl = (entityId: string) =>
-    ha
-      ? `${ha.baseUrl}/api/camera_proxy/${encodeURIComponent(entityId)}?token=${encodeURIComponent(
-          ha.longLivedToken
+    connection
+      ? `${(haMode === 'cloud' ? connection.cloudUrl ?? '' : connection.baseUrl ?? '').replace(/\/+$/, '')}/api/camera_proxy/${encodeURIComponent(entityId)}?token=${encodeURIComponent(
+          connection.longLivedToken
         )}&ts=${cameraRefreshToken}`
       : '';
 
@@ -82,29 +82,13 @@ export function DeviceDetail({
     if (pendingCommand) return;
     setPendingCommand(command);
     try {
-      if (haMode === 'cloud') {
-        await sendCloudDeviceCommand({
-          entityId: device.entityId,
-          command,
-          value,
-        });
-      } else {
-        if (!ha) {
-          Alert.alert(
-            'Almost there',
-            'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
-          );
-          return;
-        }
-
-        await handleDeviceCommand({
-          ha,
-          entityId: device.entityId,
-          command,
-          value,
-          blindTravelSeconds: device.blindTravelSeconds ?? null,
-        });
-      }
+      await executeDeviceCommand({
+        haMode,
+        connection,
+        device,
+        command,
+        value,
+      });
       if (onCommandComplete) await Promise.resolve(onCommandComplete());
     } catch (err) {
       if (__DEV__) {
@@ -156,8 +140,6 @@ export function DeviceDetail({
             renderControls({
               device,
               label,
-              brightnessPct,
-              volumePct,
               pendingCommand,
               onCommand: sendCommand,
               cameraUrlBuilder: buildCameraUrl,
@@ -178,8 +160,6 @@ export function DeviceDetail({
 function renderControls(opts: {
   device: UIDevice;
   label: string | null;
-  brightnessPct: number | null;
-  volumePct: number | null;
   pendingCommand: string | null;
   onCommand: (command: string, value?: number) => Promise<void>;
   cameraUrlBuilder: (entityId: string) => string;
@@ -188,8 +168,6 @@ function renderControls(opts: {
   const {
     device,
     label,
-    brightnessPct,
-    volumePct,
     pendingCommand,
     onCommand,
     cameraUrlBuilder,
@@ -197,260 +175,205 @@ function renderControls(opts: {
   } = opts;
   const state = (device.state ?? '').toString();
   const attrs = device.attributes ?? {};
+  const brightnessPct = getBrightnessPct(attrs);
+  const volumePct = getVolumePct(attrs);
+  const actions = getActionsForDevice(device, 'dashboard');
 
-  switch (label) {
-    case 'Light':
-      return (
-        <View style={styles.section}>
+  if (label === 'Spotify') {
+    return (
+      <View style={styles.section}>
+        {typeof attrs.entity_picture === 'string' && attrs.entity_picture.length > 0 && (
+          <Image source={{ uri: attrs.entity_picture }} style={styles.artwork} />
+        )}
+        <Text style={styles.titleSm}>{String(attrs.media_title ?? 'Track')}</Text>
+        <Text style={styles.subtitleSm}>{attrs.media_artist ? String(attrs.media_artist) : ''}</Text>
+        <View style={styles.row}>
           <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => onCommand('light/toggle')}
+            style={styles.secondaryButton}
+            onPress={() => onCommand('media/previous')}
             disabled={!!pendingCommand}
           >
-            <Text style={styles.primaryButtonText}>
-              {state === 'on' ? 'Turn off' : 'Turn on'}
-            </Text>
+            <Text style={styles.secondaryButtonText}>Prev</Text>
           </TouchableOpacity>
-          {brightnessPct !== null && (
-            <View style={styles.sliderBlock}>
-              <Text style={styles.sliderLabel}>Brightness {brightnessPct}%</Text>
-              <Slider
-                minimumValue={0}
-                maximumValue={100}
-                step={1}
-                value={brightnessPct}
-                onSlidingComplete={(val) => {
-                  onCommand('light/set_brightness', val);
-                }}
-                minimumTrackTintColor="#f59e0b"
-                maximumTrackTintColor="#e5e7eb"
-                thumbTintColor="#f59e0b"
-              />
-            </View>
-          )}
-        </View>
-      );
-    case 'Blind': {
-      const blindPosition = getBlindPosition(attrs);
-      const sliderValue = typeof blindPosition === 'number' ? blindPosition : 0;
-      const isFullyOpen = blindPosition === 100;
-      const isFullyClosed = blindPosition === 0;
-
-      return (
-        <View style={styles.section}>
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={[styles.secondaryButton, styles.buttonAlt]}
-              onPress={() => onCommand('blind/open')}
-              disabled={!!pendingCommand || isFullyOpen}
-            >
-              <Text style={styles.secondaryButtonText}>Open</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.secondaryButton, styles.buttonAlt]}
-              onPress={() => onCommand('blind/close')}
-              disabled={!!pendingCommand || isFullyClosed}
-            >
-              <Text style={styles.secondaryButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.sliderBlock}>
-            <Text style={styles.sliderLabel}>Position {sliderValue}%</Text>
-            <Slider
-              minimumValue={0}
-              maximumValue={100}
-              step={1}
-              value={sliderValue}
-              disabled={!!pendingCommand}
-              onSlidingComplete={(val) => {
-                onCommand('blind/set_position', val);
-              }}
-              minimumTrackTintColor="#4f46e5"
-              maximumTrackTintColor="#e5e7eb"
-              thumbTintColor="#4f46e5"
-            />
-          </View>
-        </View>
-      );
-    }
-    case 'Spotify':
-      return (
-        <View style={styles.section}>
-          {typeof attrs.entity_picture === 'string' && attrs.entity_picture.length > 0 && (
-            <Image source={{ uri: attrs.entity_picture }} style={styles.artwork} />
-          )}
-          <Text style={styles.titleSm}>{String(attrs.media_title ?? 'Track')}</Text>
-          <Text style={styles.subtitleSm}>{attrs.media_artist ? String(attrs.media_artist) : ''}</Text>
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('media/previous')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>Prev</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.primaryButton}
-              onPress={() => onCommand('media/play_pause')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.primaryButtonText}>
-                {state === 'playing' ? 'Pause' : 'Play'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('media/next')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>Next</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      );
-    case 'TV':
-    case 'Speaker':
-      return (
-        <View style={styles.section}>
           <TouchableOpacity
             style={styles.primaryButton}
-            onPress={() =>
-              onCommand(label === 'TV' ? 'tv/toggle_power' : 'speaker/toggle_power')
-            }
+            onPress={() => onCommand('media/play_pause')}
             disabled={!!pendingCommand}
           >
-            <Text style={styles.primaryButtonText}>
-              {state === 'on' ? 'Power off' : 'Power on'}
-            </Text>
+            <Text style={styles.primaryButtonText}>{state === 'playing' ? 'Pause' : 'Play'}</Text>
           </TouchableOpacity>
-          {volumePct !== null && (
-            <View style={styles.sliderBlock}>
-              <Text style={styles.sliderLabel}>Volume {volumePct}%</Text>
-              <Slider
-                minimumValue={0}
-                maximumValue={100}
-                step={1}
-                value={volumePct}
-                onSlidingComplete={(val) => {
-                  onCommand('media/volume_set', val);
-                }}
-                minimumTrackTintColor="#4f46e5"
-                maximumTrackTintColor="#e5e7eb"
-                thumbTintColor="#4f46e5"
-              />
-            </View>
-          )}
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('media/volume_down')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>Volume -</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('media/volume_up')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>Volume +</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      );
-    case 'Boiler': {
-      const target = attrs.temperature ?? attrs.target_temp;
-      const current = attrs.current_temperature;
-      return (
-        <View style={styles.section}>
-          <Text style={styles.titleSm}>
-            Target: {typeof target === 'number' ? target : '—'}°
-          </Text>
-          <Text style={styles.subtitleSm}>
-            Current: {typeof current === 'number' ? current : '—'}°
-          </Text>
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('boiler/temp_down')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>-</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => onCommand('boiler/temp_up')}
-              disabled={!!pendingCommand}
-            >
-              <Text style={styles.secondaryButtonText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      );
-    }
-    case 'Motion Sensor': {
-      const activeMotion = ['on', 'motion', 'detected', 'open'].includes(state.toLowerCase());
-      return (
-        <View style={styles.section}>
-          <View
-            style={[
-              styles.motionBadge,
-              { backgroundColor: activeMotion ? '#10b981' : '#d1d5db' },
-            ]}
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => onCommand('media/next')}
+            disabled={!!pendingCommand}
           >
-            <Text style={styles.motionText}>
-              {activeMotion ? 'Motion detected' : 'No motion'}
-            </Text>
-          </View>
+            <Text style={styles.secondaryButtonText}>Next</Text>
+          </TouchableOpacity>
         </View>
-      );
-    }
-    case 'Doorbell': {
-      const url = cameraUrlBuilder(device.entityId);
-      return (
-        <View style={styles.section}>
-          <View style={styles.cameraCard}>
-            <Image source={{ uri: url }} style={styles.cameraImage} resizeMode="cover" />
-          </View>
-        </View>
-      );
-    }
-    case 'Home Security': {
-      const cams = relatedDevices ?? [];
-      if (!cams.length) {
-        return (
-          <View style={styles.section}>
-            <Text style={styles.secondary}>No cameras available.</Text>
-          </View>
-        );
-      }
-      return (
-        <View style={styles.section}>
-          <View style={styles.cameraGrid}>
-            {cams.map((cam) => (
-              <View key={cam.entityId} style={styles.cameraTile}>
-                <Image
-                  source={{ uri: cameraUrlBuilder(cam.entityId) }}
-                  style={styles.cameraThumb}
-                  resizeMode="cover"
-                />
-                <Text style={styles.cameraName} numberOfLines={1}>
-                  {cam.name}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      );
-    }
-    default:
-      return (
-        <View style={styles.section}>
-          <Text style={styles.secondary}>No interactive controls available.</Text>
-        </View>
-      );
+      </View>
+    );
   }
+
+  if (label === 'Doorbell') {
+    const url = cameraUrlBuilder(device.entityId);
+    return (
+      <View style={styles.section}>
+        <View style={styles.cameraCard}>
+          <Image source={{ uri: url }} style={styles.cameraImage} resizeMode="cover" />
+        </View>
+      </View>
+    );
+  }
+
+  if (label === 'Home Security') {
+    const cams = relatedDevices ?? [];
+    if (!cams.length) {
+      return (
+        <View style={styles.section}>
+          <Text style={styles.secondary}>No cameras available.</Text>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.section}>
+        <View style={styles.cameraGrid}>
+          {cams.map((cam) => (
+            <View key={cam.entityId} style={styles.cameraTile}>
+              <Image source={{ uri: cameraUrlBuilder(cam.entityId) }} style={styles.cameraThumb} resizeMode="cover" />
+              <Text style={styles.cameraName} numberOfLines={1}>
+                {cam.name}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  if (!actions.length) {
+    return (
+      <View style={styles.section}>
+        <Text style={styles.secondary}>No interactive controls available.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.section}>
+      {actions.map((action) =>
+        renderActionControl({
+          action,
+          device,
+          pendingCommand,
+          onCommand,
+        })
+      )}
+    </View>
+  );
+}
+
+function renderActionControl(params: {
+  action: DeviceActionSpec;
+  device: UIDevice;
+  pendingCommand: string | null;
+  onCommand: (command: string, value?: number) => Promise<void>;
+}) {
+  const { action, device, pendingCommand, onCommand } = params;
+  const attrs = device.attributes ?? {};
+  const blindPosition = getBlindPosition(attrs);
+  const pendingId = resolvePendingId(action);
+  const isPending = pendingId ? pendingCommand === pendingId : false;
+
+  if (action.kind === 'slider') {
+    const value = readSliderValue(action.id, attrs) ?? action.min;
+    return (
+      <View key={action.id} style={styles.sliderBlock}>
+        <Text style={styles.sliderLabel}>
+          {action.label} {Math.round(value)}{action.id.includes('temperature') ? '°' : '%'}
+        </Text>
+        <Slider
+          minimumValue={action.min}
+          maximumValue={action.max}
+          step={action.step ?? 1}
+          value={value}
+          disabled={!!pendingCommand}
+          onSlidingComplete={(val) => {
+            const cmd = action.command;
+            onCommand(cmd, val);
+          }}
+          minimumTrackTintColor="#4f46e5"
+          maximumTrackTintColor="#e5e7eb"
+          thumbTintColor="#4f46e5"
+        />
+      </View>
+    );
+  }
+
+  if (action.kind === 'fixed') {
+    const disabled =
+      !!pendingCommand ||
+      (action.command === 'blind/open' && blindPosition === 100) ||
+      (action.command === 'blind/close' && blindPosition === 0);
+    return (
+      <TouchableOpacity
+        key={action.id}
+        style={[styles.secondaryButton, styles.buttonAlt, { marginBottom: 10 }]}
+        onPress={() => onCommand(action.command, action.value)}
+        disabled={disabled}
+      >
+        <Text style={styles.secondaryButtonText}>{action.label}</Text>
+      </TouchableOpacity>
+    );
+  }
+
+  if (action.kind === 'button') {
+    return (
+      <TouchableOpacity
+        key={action.id}
+        style={[styles.primaryButton, { marginBottom: 10 }]}
+        disabled={!!pendingCommand}
+        onPress={() => onCommand(action.command, action.value)}
+      >
+        <Text style={styles.primaryButtonText}>{action.label}</Text>
+      </TouchableOpacity>
+    );
+  }
+
+  if (action.kind === 'toggle') {
+    const cmd = resolveToggleCommandForDevice(action, device);
+    const isOn = (device.state ?? '').toString().toLowerCase() === 'on';
+    return (
+      <TouchableOpacity
+        key={action.id}
+        style={[styles.primaryButton, { marginBottom: 10 }]}
+        disabled={!!pendingCommand}
+        onPress={() => onCommand(cmd)}
+      >
+        <Text style={styles.primaryButtonText}>{isOn ? `Turn off ${getPrimaryLabel(device)}` : `Turn on ${getPrimaryLabel(device)}`}</Text>
+      </TouchableOpacity>
+    );
+  }
+
+  return null;
+}
+
+function resolvePendingId(action: DeviceActionSpec): string | null {
+  if (action.kind === 'toggle') return action.commandOn;
+  if (action.kind === 'button') return action.command;
+  if (action.kind === 'fixed') return action.command;
+  if (action.kind === 'slider') return action.command;
+  return null;
+}
+
+function readSliderValue(id: string, attrs: Record<string, unknown>): number | null {
+  if (id.includes('brightness')) return getBrightnessPct(attrs) ?? 0;
+  if (id.includes('volume')) return getVolumePct(attrs) ?? 0;
+  if (id.includes('position')) return getBlindPosition(attrs) ?? 0;
+  if (id.includes('temp')) {
+    const target = getTargetTemperature(attrs);
+    if (target !== null) return target;
+  }
+  return null;
 }
 
 function LinkedSensorList({
@@ -616,17 +539,6 @@ function LinkedSensorList({
   );
 }
 
-function getBrightnessPct(attrs: Record<string, any>): number | null {
-  if (typeof attrs.brightness_pct === 'number') return Math.round(attrs.brightness_pct);
-  if (typeof attrs.brightness === 'number') return Math.round((attrs.brightness / 255) * 100);
-  return null;
-}
-
-function getVolumePct(attrs: Record<string, any>): number | null {
-  if (typeof attrs.volume_level === 'number') return Math.round(attrs.volume_level * 100);
-  return null;
-}
-
 function getSecondaryLine(device: UIDevice): string {
   const state = (device.state ?? '').toString();
   const attrs = device.attributes ?? {};
@@ -648,23 +560,6 @@ function getSecondaryLine(device: UIDevice): string {
     return state;
   }
   return state;
-}
-
-function getBlindPosition(attrs: Record<string, unknown>): number | null {
-  const candidates = ['blind_position', 'position', 'current_position', 'position_percent'];
-  for (const key of candidates) {
-    const raw = (attrs as Record<string, unknown>)[key];
-    if (typeof raw === 'number') {
-      return Math.round(raw);
-    }
-    if (typeof raw === 'string') {
-      const n = Number(raw);
-      if (!Number.isNaN(n)) {
-        return Math.round(n);
-      }
-    }
-  }
-  return null;
 }
 
 function formatSensorValue(sensor: UIDevice): string {
