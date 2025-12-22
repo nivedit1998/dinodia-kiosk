@@ -4,6 +4,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } fr
 import type { UIDevice } from '../models/device';
 import { getPrimaryLabel } from '../utils/deviceLabels';
 import { handleDeviceCommand } from '../utils/haCommands';
+import { sendCloudDeviceCommand } from '../api/deviceControl';
 import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
 
@@ -27,10 +28,9 @@ export const DeviceCard = memo(function DeviceCard({
   const { session, haMode } = useSession();
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const connection = session.haConnection;
-  const baseUrlRaw = haMode === 'cloud' ? connection?.cloudUrl ?? '' : connection?.baseUrl ?? '';
-  const baseUrl = baseUrlRaw.trim().replace(/\/+$/, '');
+  const baseUrl = (connection?.baseUrl ?? '').trim().replace(/\/+$/, '');
   const ha =
-    baseUrl && connection
+    haMode === 'home' && baseUrl && connection
       ? {
           baseUrl,
           longLivedToken: connection.longLivedToken,
@@ -70,24 +70,32 @@ export const DeviceCard = memo(function DeviceCard({
       : { fontSize: 13 };
 
   async function sendCommand(command: string, value?: number) {
-    if (!ha) {
-      Alert.alert(
-        'Almost there',
-        haMode === 'cloud'
-          ? 'Dinodia Cloud is not ready yet. The homeowner needs to finish setting up remote access for this property.'
-          : 'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
-      );
-      return;
-    }
     if (pendingCommand) return;
     setPendingCommand(command);
     try {
-      await handleDeviceCommand({
-        ha,
-        entityId: device.entityId,
-        command,
-        value,
-      });
+      if (haMode === 'cloud') {
+        await sendCloudDeviceCommand({
+          entityId: device.entityId,
+          command,
+          value,
+        });
+      } else {
+        if (!ha) {
+          Alert.alert(
+            'Almost there',
+            'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
+          );
+          return;
+        }
+
+        await handleDeviceCommand({
+          ha,
+          entityId: device.entityId,
+          command,
+          value,
+          blindTravelSeconds: device.blindTravelSeconds ?? null,
+        });
+      }
       if (onAfterCommand) await Promise.resolve(onAfterCommand());
     } catch (err) {
       if (__DEV__) {
@@ -98,6 +106,8 @@ export const DeviceCard = memo(function DeviceCard({
         'We could not complete that',
         err instanceof Error && err.message
           ? err.message
+          : haMode === 'cloud'
+          ? 'Dinodia Cloud could not send that command. Please try again.'
           : 'We could not send that to your Dinodia Hub. Please try again.'
       );
     } finally {

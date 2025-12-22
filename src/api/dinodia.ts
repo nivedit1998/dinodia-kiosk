@@ -194,6 +194,10 @@ export async function fetchDevicesForUser(
     const primaryLabel =
       labels.length > 0 && labels[0] ? String(labels[0]) : null;
     const label = override?.label ?? primaryLabel ?? labelCategory ?? null;
+    const blindTravelSeconds =
+      typeof override?.blindTravelSeconds === 'number'
+        ? override.blindTravelSeconds
+        : null;
 
     return {
       entityId: d.entityId,
@@ -207,6 +211,7 @@ export async function fetchDevicesForUser(
       labelCategory,
       domain: d.domain,
       attributes: d.attributes ?? {},
+      blindTravelSeconds,
     };
   });
 

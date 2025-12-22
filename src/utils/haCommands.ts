@@ -4,6 +4,7 @@ import { callHaService, fetchHaState, HaConnectionLike } from '../api/ha';
 export const NUMERIC_COMMANDS = new Set<string>([
   'light/set_brightness',
   'media/volume_set',
+  'blind/set_position',
 ]);
 
 export async function handleDeviceCommand(params: {
@@ -11,6 +12,7 @@ export async function handleDeviceCommand(params: {
   entityId: string;
   command: string;
   value?: number;
+  blindTravelSeconds?: number | null;
 }) {
   const { ha, entityId, command, value } = params;
 
@@ -41,25 +43,36 @@ export async function handleDeviceCommand(params: {
       });
       break;
     case 'blind/open':
-      // Mirror web: call script.turn_on on script.openblind; long timeout for ~30s travel.
-      await callHaService(
-        ha,
-        'script',
-        'turn_on',
-        { entity_id: 'script.openblind' },
-        40000
-      );
-      break;
     case 'blind/close':
-      // Mirror web: call script.turn_on on script.closeblind; long timeout for ~30s travel.
+    case 'blind/set_position': {
+      const target =
+        command === 'blind/open'
+          ? 100
+          : command === 'blind/close'
+          ? 0
+          : clamp(typeof value === 'number' ? value : 0, 0, 100);
+
+      const defaultTravel = 22;
+      const hasOverride =
+        typeof params.blindTravelSeconds === 'number' &&
+        Number.isFinite(params.blindTravelSeconds) &&
+        params.blindTravelSeconds > 0;
+      const travelSecondsRaw = hasOverride ? params.blindTravelSeconds! : defaultTravel;
+      const travelSeconds = clamp(travelSecondsRaw, 5, 90);
+
       await callHaService(
         ha,
         'script',
-        'turn_on',
-        { entity_id: 'script.closeblind' },
+        'global_blind_controller',
+        {
+          target_cover: entityId,
+          target_position: target,
+          travel_seconds: travelSeconds,
+        },
         40000
       );
       break;
+    }
     case 'media/play_pause':
       await callHaService(
         ha,

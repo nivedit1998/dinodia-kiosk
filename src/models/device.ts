@@ -11,6 +11,7 @@ export type UIDevice = {
   labels?: string[];
   domain: string;
   attributes: Record<string, unknown>;
+  blindTravelSeconds?: number | null;
 };
 
 export type DeviceOverride = {
@@ -20,4 +21,5 @@ export type DeviceOverride = {
   name: string;
   area: string | null;
   label: string | null;
+  blindTravelSeconds?: number | null;
 };

@@ -16,6 +16,7 @@ import type { UIDevice } from '../models/device';
 import { fetchSensorHistoryForCurrentUser, HistoryPoint } from '../api/monitoringHistory';
 import { getPrimaryLabel } from '../utils/deviceLabels';
 import { handleDeviceCommand } from '../utils/haCommands';
+import { sendCloudDeviceCommand } from '../api/deviceControl';
 import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
 
@@ -78,19 +79,32 @@ export function DeviceDetail({
 
   async function sendCommand(command: string, value?: number) {
     if (!device) return;
-    if (!ha) {
-      Alert.alert(
-        'Almost there',
-        haMode === 'cloud'
-          ? 'Dinodia Cloud is not ready yet. The homeowner needs to finish setting up remote access for this property.'
-          : 'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
-      );
-      return;
-    }
     if (pendingCommand) return;
     setPendingCommand(command);
     try {
-      await handleDeviceCommand({ ha, entityId: device.entityId, command, value });
+      if (haMode === 'cloud') {
+        await sendCloudDeviceCommand({
+          entityId: device.entityId,
+          command,
+          value,
+        });
+      } else {
+        if (!ha) {
+          Alert.alert(
+            'Almost there',
+            'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
+          );
+          return;
+        }
+
+        await handleDeviceCommand({
+          ha,
+          entityId: device.entityId,
+          command,
+          value,
+          blindTravelSeconds: device.blindTravelSeconds ?? null,
+        });
+      }
       if (onCommandComplete) await Promise.resolve(onCommandComplete());
     } catch (err) {
       if (__DEV__) {
@@ -101,6 +115,8 @@ export function DeviceDetail({
         'We could not complete that',
         err instanceof Error && err.message
           ? err.message
+          : haMode === 'cloud'
+          ? 'Dinodia Cloud could not send that command. Please try again.'
           : 'We could not send that to your Dinodia Hub. Please try again.'
       );
     } finally {
@@ -214,25 +230,50 @@ function renderControls(opts: {
           )}
         </View>
       );
-    case 'Blind':
+    case 'Blind': {
+      const blindPosition = getBlindPosition(attrs);
+      const sliderValue = typeof blindPosition === 'number' ? blindPosition : 0;
+      const isFullyOpen = blindPosition === 100;
+      const isFullyClosed = blindPosition === 0;
+
       return (
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={[styles.secondaryButton, styles.buttonAlt]}
-            onPress={() => onCommand('blind/open')}
-            disabled={!!pendingCommand}
-          >
-            <Text style={styles.secondaryButtonText}>Open</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.secondaryButton, styles.buttonAlt]}
-            onPress={() => onCommand('blind/close')}
-            disabled={!!pendingCommand}
-          >
-            <Text style={styles.secondaryButtonText}>Close</Text>
-          </TouchableOpacity>
+        <View style={styles.section}>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, styles.buttonAlt]}
+              onPress={() => onCommand('blind/open')}
+              disabled={!!pendingCommand || isFullyOpen}
+            >
+              <Text style={styles.secondaryButtonText}>Open</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryButton, styles.buttonAlt]}
+              onPress={() => onCommand('blind/close')}
+              disabled={!!pendingCommand || isFullyClosed}
+            >
+              <Text style={styles.secondaryButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sliderBlock}>
+            <Text style={styles.sliderLabel}>Position {sliderValue}%</Text>
+            <Slider
+              minimumValue={0}
+              maximumValue={100}
+              step={1}
+              value={sliderValue}
+              disabled={!!pendingCommand}
+              onSlidingComplete={(val) => {
+                onCommand('blind/set_position', val);
+              }}
+              minimumTrackTintColor="#4f46e5"
+              maximumTrackTintColor="#e5e7eb"
+              thumbTintColor="#4f46e5"
+            />
+          </View>
         </View>
       );
+    }
     case 'Spotify':
       return (
         <View style={styles.section}>
