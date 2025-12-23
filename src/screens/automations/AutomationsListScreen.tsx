@@ -1,19 +1,42 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  SafeAreaView,
+  Switch,
+  NativeModules,
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { listAutomations, setAutomationEnabled, deleteAutomation, type AutomationSummary } from '../../api/automations';
 import { useNavigation } from '@react-navigation/native';
 import { useSession } from '../../store/sessionStore';
+import { palette, maxContentWidth, radii, shadows, spacing, typography } from '../../ui/theme';
+import { TopBar } from '../../components/ui/TopBar';
+import { PrimaryButton } from '../../components/ui/PrimaryButton';
+import { HeaderMenu } from '../../components/HeaderMenu';
+import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
+import { logoutRemote } from '../../api/auth';
+
+const { InlineWifiSetupLauncher } = NativeModules;
 
 type Props = NativeStackScreenProps<any>;
 
 export function AutomationsListScreen({}: Props) {
-  const navigation = useNavigation();
-  const { session, haMode } = useSession();
+  const navigation = useNavigation<any>();
+  const { session, haMode, setHaMode, clearSession } = useSession();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const userId = session.user?.id;
+  const isCloud = haMode === 'cloud';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,118 +101,166 @@ export function AutomationsListScreen({}: Props) {
     [refresh]
   );
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Home Automations</Text>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => navigation.navigate('AutomationEditor' as never)}
-        >
-          <Text style={styles.addButtonText}>+ Add</Text>
-        </TouchableOpacity>
-      </View>
+  const handleToggleMode = useCallback(() => {
+    const next = isCloud ? 'home' : 'cloud';
+    if (userId) {
+      void clearDeviceCacheForUserAndMode(userId, next).catch(() => undefined);
+    }
+    setHaMode(next);
+  }, [isCloud, setHaMode, userId]);
 
-      {loading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Loading automations…</Text>
-        </View>
-      ) : error ? (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={load}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={automations}
-          keyExtractor={(item) => item.id}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.item}
-              onPress={() =>
-                navigation.navigate('AutomationEditor' as never, { automationId: item.id, alias: item.alias, description: item.description } as never)
-              }
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>{item.alias}</Text>
-                {item.description ? <Text style={styles.itemSubtitle}>{item.description}</Text> : null}
-                <Text style={styles.itemStatus}>{item.enabled ? 'Enabled' : 'Disabled'}</Text>
-              </View>
-              <View style={styles.itemActions}>
-                <TouchableOpacity
-                  style={[styles.smallBtn, { backgroundColor: '#e5e7eb' }]}
-                  onPress={() => handleToggleEnabled(item.id, item.enabled)}
-                >
-                  <Text style={styles.smallBtnText}>{item.enabled ? 'Disable' : 'Enable'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.smallBtn, { backgroundColor: '#fee2e2' }]}
-                  onPress={() => handleDelete(item.id)}
-                >
-                  <Text style={[styles.smallBtnText, { color: '#b91c1c' }]}>Delete</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>No automations yet.</Text>
+  const handleOpenWifiSetup = useCallback(() => {
+    if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {
+      InlineWifiSetupLauncher.open();
+    } else {
+      Alert.alert('Wi-Fi', 'Wi-Fi setup is not available on this device.');
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await logoutRemote().catch(() => undefined);
+    await clearSession();
+  }, [clearSession]);
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <TopBar
+        mode={haMode}
+        activeTab="automations"
+        onPressMenu={() => setMenuVisible(true)}
+        onChangeTab={(tab) => {
+          if (tab === 'dashboard') navigation.getParent()?.navigate('DashboardTab');
+        }}
+      />
+
+      <View style={styles.content}>
+        <View style={styles.inner}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.title}>Automations</Text>
+              <Text style={styles.subtitle}>Scenes that keep your place effortless.</Text>
             </View>
-          }
-        />
-      )}
-    </View>
+            <PrimaryButton
+              title="+ Add"
+              onPress={() => navigation.navigate('AutomationEditor' as never)}
+              style={{ paddingHorizontal: spacing.xl }}
+            />
+          </View>
+
+          {loading ? (
+            <View style={styles.loading}>
+              <ActivityIndicator size="large" color={palette.primary} />
+              <Text style={styles.loadingText}>Loading automations…</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+              <PrimaryButton title="Retry" onPress={load} />
+            </View>
+          ) : (
+            <FlatList
+              data={automations}
+              keyExtractor={(item) => item.id}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.item}
+                  onPress={() =>
+                    navigation.navigate('AutomationEditor' as never, { automationId: item.id, alias: item.alias, description: item.description } as never)
+                  }
+                  activeOpacity={0.9}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.itemTitle}>{item.alias}</Text>
+                    {item.description ? <Text style={styles.itemSubtitle}>{item.description}</Text> : null}
+                    <Text style={styles.itemStatus}>{item.enabled ? 'Enabled' : 'Disabled'}</Text>
+                  </View>
+                  <View style={styles.itemActions}>
+                    <Switch
+                      value={item.enabled}
+                      onValueChange={() => handleToggleEnabled(item.id, item.enabled)}
+                      thumbColor="#fff"
+                      trackColor={{ true: palette.primary, false: '#d1d5db' }}
+                    />
+                    <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteText}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Text style={styles.emptyText}>No automations yet.</Text>
+                  <Text style={styles.emptySub}>Create your first automation to get started.</Text>
+                </View>
+              }
+              contentContainerStyle={{ paddingBottom: spacing.xxl }}
+            />
+          )}
+        </View>
+      </View>
+      <HeaderMenu
+        visible={menuVisible}
+        isCloud={isCloud}
+        onClose={() => setMenuVisible(false)}
+        onToggleMode={handleToggleMode}
+        onOpenWifi={handleOpenWifiSetup}
+        onLogout={handleLogout}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f7', padding: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  title: { fontSize: 22, fontWeight: '700', color: '#111827' },
-  addButton: {
-    backgroundColor: '#111827',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+  container: { flex: 1, backgroundColor: palette.background },
+  content: {
+    flex: 1,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
   },
-  addButtonText: { color: '#fff', fontWeight: '700' },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  loadingText: { color: '#6b7280' },
-  errorBox: { padding: 12, borderRadius: 12, backgroundColor: '#fef2f2' },
-  errorText: { color: '#b91c1c', marginBottom: 8 },
-  retryBtn: {
-    backgroundColor: '#111827',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignSelf: 'flex-start',
+  inner: { width: '100%', maxWidth: maxContentWidth },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
   },
-  retryText: { color: '#fff', fontWeight: '700' },
-  item: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 10,
+  title: { ...typography.heading },
+  subtitle: { color: palette.textMuted, marginTop: 4 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  loadingText: { color: palette.textMuted },
+  errorBox: {
+    padding: spacing.lg,
+    borderRadius: radii.lg,
+    backgroundColor: '#fef2f2',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#fecaca',
+  },
+  errorText: { color: palette.danger, marginBottom: spacing.sm },
+  item: {
+    backgroundColor: palette.surface,
+    padding: spacing.lg,
+    borderRadius: radii.lg,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: palette.outline,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: spacing.md,
+    ...shadows.soft,
   },
-  itemTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  itemSubtitle: { fontSize: 13, color: '#4b5563', marginTop: 2 },
-  itemStatus: { fontSize: 12, color: '#6b7280', marginTop: 6 },
-  itemActions: { gap: 6 },
-  smallBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+  itemTitle: { fontSize: 16, fontWeight: '700', color: palette.text },
+  itemSubtitle: { fontSize: 13, color: palette.textMuted, marginTop: 2 },
+  itemStatus: { fontSize: 12, color: palette.textMuted, marginTop: 6 },
+  itemActions: { gap: spacing.sm, alignItems: 'flex-end' },
+  deleteButton: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: '#ffe8e8',
   },
-  smallBtnText: { fontWeight: '700', color: '#111827', fontSize: 12 },
+  deleteText: { color: palette.danger, fontWeight: '700' },
   empty: { paddingVertical: 40, alignItems: 'center' },
-  emptyText: { color: '#6b7280' },
+  emptyText: { color: palette.text, fontSize: 16, fontWeight: '700' },
+  emptySub: { color: palette.textMuted, marginTop: 4 },
 });

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, Pressable } from 'react-native';
+import { palette, radii, shadows, spacing } from '../ui/theme';
 
 type Props = {
   visible: boolean;
@@ -66,37 +67,36 @@ export function HeaderMenu({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.35)' },
   menuContainer: {
     position: 'absolute',
-    top: 50,
+    top: 70,
     right: 12,
   },
   menuCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 16,
-    paddingVertical: 8,
+    backgroundColor: palette.surface,
+    borderRadius: radii.lg,
+    paddingVertical: spacing.xs,
     minWidth: 200,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    ...shadows.medium,
   },
   menuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
   },
   menuItemText: {
-    fontSize: 14,
-    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
   },
   logoutText: {
-    color: '#b91c1c',
+    color: palette.danger,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#e5e7eb',
-    marginHorizontal: 12,
+    backgroundColor: palette.outline,
+    marginHorizontal: spacing.md,
   },
 });

@@ -46,7 +46,7 @@ function AutomationStackScreen() {
 
 export function TenantNavigator() {
   return (
-    <Tab.Navigator screenOptions={{ headerShown: false }}>
+    <Tab.Navigator screenOptions={{ headerShown: false, tabBarStyle: { display: 'none' } }}>
       <Tab.Screen name="DashboardTab" component={DashboardStackScreen} options={{ title: 'Dashboard' }} />
       <Tab.Screen name="AutomationsTab" component={AutomationStackScreen} options={{ title: 'Home Automations' }} />
     </Tab.Navigator>

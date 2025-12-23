@@ -9,8 +9,10 @@ import {
   FlatList,
   Modal,
   Pressable,
+  SafeAreaView,
   type DimensionValue,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import type { UIDevice } from '../models/device';
 import { normalizeLabel } from '../utils/deviceLabels';
 import { isDetailDevice, isSensorDevice } from '../utils/deviceKinds';
@@ -33,6 +35,8 @@ import { RingDoorbellCard } from '../components/RingDoorbellCard';
 import { loadJson, saveJson } from '../utils/storage';
 import type { Role } from '../models/roles';
 import { useSession } from '../store/sessionStore';
+import { TopBar } from '../components/ui/TopBar';
+import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
 
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -51,6 +55,7 @@ type DashboardContentProps = {
 };
 
 function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: DashboardContentProps) {
+  const navigation = useNavigation<any>();
   const isAdmin = role === 'ADMIN';
   const hideSensors = false; // Show sensors for all roles; tenants are already filtered by access rules.
   const persistAreaSelection = role === 'TENANT';
@@ -257,54 +262,56 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   const headerAreaLabel = selectedArea === ALL_AREAS ? ALL_AREAS_LABEL : selectedArea;
 
   return (
-    <View style={styles.screen}>
-      <FlatList
-        style={styles.list}
-        data={rows}
-        keyExtractor={(item) => item.key}
-        renderItem={renderDeviceRow}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View style={styles.headerContainer}>
-            <View style={styles.headerRow}>
-              <View style={styles.headerTextGroup}>
-                <TouchableOpacity
-                  onPress={() => setAreaMenuVisible(true)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.headerArea}>{headerAreaLabel}</Text>
-                </TouchableOpacity>
-                <Text style={styles.headerMode}>{` • ${modeLabel}`}</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.menuIconButton}
-                onPress={() => setMenuVisible(true)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.menuIconText}>⋯</Text>
-              </TouchableOpacity>
-            </View>
-            {error && <Text style={styles.error}>{error}</Text>}
-          </View>
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>
-              {isColdStart
-                ? 'Loading devices…'
-                : showErrorEmpty
-                ? 'Unable to reach devices. Please check your connection or HA URL.'
-                : 'No devices available.'}
-            </Text>
-          </View>
-        }
-        refreshing={refreshing}
-        onRefresh={handleRefresh}
-        initialNumToRender={10}
-        windowSize={5}
-        removeClippedSubviews
+    <SafeAreaView style={styles.screen}>
+      <TopBar
+        areaLabel={headerAreaLabel}
+        mode={haMode}
+        activeTab="dashboard"
+        onPressArea={() => setAreaMenuVisible(true)}
+        onPressMenu={() => setMenuVisible(true)}
+        onChangeTab={(tab) => {
+          if (tab === 'automations') {
+            navigation.getParent()?.navigate('AutomationsTab');
+          }
+        }}
       />
-      <SpotifyCard />
+
+      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+
+      <View style={styles.content}>
+        <FlatList
+          style={styles.list}
+          data={rows}
+          keyExtractor={(item) => item.key}
+          renderItem={renderDeviceRow}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>
+                {isColdStart
+                  ? 'Loading devices…'
+                  : showErrorEmpty
+                  ? 'Unable to reach devices.'
+                  : 'No devices available.'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {showErrorEmpty
+                  ? 'Check your connection or switch modes.'
+                  : 'Add devices to this area to get started.'}
+              </Text>
+            </View>
+          }
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          initialNumToRender={10}
+          windowSize={5}
+          removeClippedSubviews
+        />
+      </View>
+
+      <View style={styles.spotifyCardWrap} pointerEvents="box-none">
+        <SpotifyCard />
+      </View>
       <Modal
         visible={areaMenuVisible}
         transparent
@@ -378,7 +385,7 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
         onOpenWifi={handleOpenWifiSetup}
         onLogout={handleLogout}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -404,75 +411,88 @@ export function DashboardScreen({ role }: DashboardScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f5f5f7' },
-  list: { flex: 1, backgroundColor: '#f5f5f7' },
-  listContent: { padding: 16, backgroundColor: '#f5f5f7' },
-  headerContainer: { marginBottom: 8 },
-  headerRow: {
-    flexDirection: 'row',
+  screen: { flex: 1, backgroundColor: palette.background, position: 'relative' },
+  content: {
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
   },
-  headerTextGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerArea: { fontSize: 20, fontWeight: '600', color: '#111827' },
-  headerMode: { fontSize: 20, fontWeight: '600', color: '#111827' },
-  error: { color: 'red', marginBottom: 8 },
-  menuIconButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  list: { flex: 1, width: '100%' },
+  listContent: {
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.xxl + 140,
+    gap: spacing.md,
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#e5e7eb',
   },
-  menuIconText: { fontSize: 20, color: '#111827', marginTop: -2 },
+  errorBanner: {
+    backgroundColor: '#fef2f2',
+    color: palette.danger,
+    marginHorizontal: spacing.xl,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    ...shadows.soft,
+  },
   refreshing: { fontSize: 12, color: '#9ca3af' },
-  deviceRow: { flexDirection: 'row', marginBottom: 12 },
-  sectionContainer: { paddingHorizontal: 4 },
+  deviceRow: {
+    flexDirection: 'row',
+    marginBottom: spacing.md,
+    width: '100%',
+    maxWidth: maxContentWidth,
+  },
+  sectionContainer: { paddingHorizontal: 6 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    backgroundColor: '#eef2f7',
-    borderRadius: 6,
-    marginBottom: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: palette.surfaceMuted,
+    borderRadius: radii.md,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: palette.outline,
   },
-  sectionTitle: { fontSize: 12, fontWeight: '600', color: '#6b7280' },
+  sectionTitle: { fontSize: 13, fontWeight: '700', color: palette.textMuted, letterSpacing: 0.2 },
   sectionCards: { flexDirection: 'row', flexWrap: 'wrap' },
-  cardWrapper: { paddingHorizontal: 4, paddingVertical: 6, flexShrink: 0 },
-  emptyState: { paddingVertical: 32, alignItems: 'center' },
-  emptyText: { color: '#6b7280' },
-  areaMenuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' },
+  cardWrapper: { paddingHorizontal: 6, paddingVertical: 8, flexShrink: 0 },
+  emptyState: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyTitle: { color: palette.text, fontSize: 18, fontWeight: '700', marginBottom: 6 },
+  emptySub: { color: palette.textMuted },
+  areaMenuBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.35)' },
   areaMenuContainer: {
     position: 'absolute',
-    top: 80,
+    top: 120,
     left: 16,
     right: 16,
     alignItems: 'center',
   },
   areaMenuCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 16,
-    paddingVertical: 8,
-    minWidth: 220,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    backgroundColor: palette.surface,
+    borderRadius: radii.xl,
+    paddingVertical: 10,
+    minWidth: 240,
+    ...shadows.medium,
   },
   areaMenuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
   },
   areaMenuItemText: {
     fontSize: 14,
-    color: '#111827',
+    color: palette.text,
   },
   areaMenuItemSelected: {
     fontWeight: '700',
+    color: palette.primary,
+  },
+  spotifyCardWrap: {
+    position: 'absolute',
+    bottom: spacing.md,
+    left: 0,
+    right: 0,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
   },
 });

@@ -13,6 +13,7 @@ import { getBlindPosition, getBrightnessPct, getVolumePct } from '../capabilitie
 import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
 import { executeDeviceCommand } from '../devices/deviceExecutor';
+import { palette, radii, shadows, spacing } from '../ui/theme';
 
 export type DeviceCardSize = 'small' | 'medium' | 'large';
 
@@ -47,10 +48,10 @@ export const DeviceCard = memo(function DeviceCard({
 
   const sizeStyles =
     size === 'small'
-      ? { padding: 10, borderRadius: 16, minHeight: 80 }
+      ? { padding: spacing.md, borderRadius: radii.lg, minHeight: 90 }
       : size === 'medium'
-      ? { padding: 14, borderRadius: 20, minHeight: 110 }
-      : { padding: 18, borderRadius: 24, minHeight: 140 };
+      ? { padding: spacing.lg, borderRadius: radii.xl, minHeight: 120 }
+      : { padding: spacing.xl, borderRadius: radii.xl, minHeight: 150 };
 
   const nameStyle =
     size === 'small'
@@ -116,14 +117,14 @@ export const DeviceCard = memo(function DeviceCard({
               : baseBg;
           return {
             backgroundColor: bg,
-            borderColor: active ? 'rgba(0,0,0,0.08)' : '#e5e7eb',
+            borderColor: active ? 'rgba(0,0,0,0.04)' : palette.outline,
             opacity: label === 'Blind' && blindPosition !== null ? 1 : active ? 1 : 0.9,
           };
         })(),
       ]}
     >
       <View style={styles.topRow}>
-        <Text style={[styles.label, { color: active ? '#0f172a' : '#9ca3af' }]}>{label}</Text>
+        <Text style={[styles.label, { color: active ? '#0f172a' : '#94a3b8' }]}>{label}</Text>
       </View>
       <View style={styles.body}>
         <Text style={[styles.name, nameStyle, { color: active ? '#0f172a' : '#94a3b8' }]}>
@@ -147,14 +148,14 @@ export const DeviceCard = memo(function DeviceCard({
                   onPress={() => sendAction(action)}
                   activeOpacity={0.85}
                   disabled={disabled}
-                  style={[
-                    styles.secondaryActionButton,
-                    {
-                      backgroundColor: active ? preset.iconActiveBackground : '#111827',
-                      opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
-                    },
-                  ]}
-                >
+              style={[
+                styles.secondaryActionButton,
+                {
+                  backgroundColor: active ? preset.iconActiveBackground : '#0f172a',
+                  opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
+                },
+              ]}
+            >
                   {isPending ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
@@ -172,7 +173,7 @@ export const DeviceCard = memo(function DeviceCard({
               disabled={hasPending}
               style={[
                 styles.primaryActionButton,
-                { backgroundColor: active ? preset.iconActiveBackground : '#111827' },
+                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
                 hasPending && styles.primaryActionButtonDisabled,
               ]}
             >
@@ -323,15 +324,13 @@ function rgbToHex(r: number, g: number, b: number): string {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 18,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
     borderWidth: 1,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    borderColor: palette.outline,
+    backgroundColor: palette.surface,
+    ...shadows.soft,
   },
   topRow: {
     flexDirection: 'row',
@@ -340,52 +339,44 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 11,
-    letterSpacing: 1.3,
+    letterSpacing: 1.1,
     textTransform: 'uppercase',
     fontWeight: '700',
-    color: '#111827',
+    color: palette.textMuted,
   },
   icon: { fontSize: 18, color: '#fff' },
-  body: { marginTop: 8 },
-  name: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  secondary: { fontSize: 11, color: '#4b5563', marginTop: 4 },
+  body: { marginTop: spacing.sm },
+  name: { fontSize: 15, fontWeight: '700', color: palette.text },
+  secondary: { fontSize: 12, color: palette.textMuted, marginTop: 6 },
   primaryActionButton: {
-    marginTop: 10,
+    marginTop: spacing.md,
     width: '100%',
-    paddingVertical: 12,
-    borderRadius: 999,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    ...shadows.soft,
   },
   primaryActionButtonDisabled: {
     opacity: 0.6,
   },
   blindActionsRow: {
-    marginTop: 10,
+    marginTop: spacing.md,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    columnGap: 8,
+    columnGap: spacing.sm,
   },
   secondaryActionButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 999,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
+    ...shadows.soft,
   },
   primaryActionText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#fff',
   },
   primaryActionContent: {

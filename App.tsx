@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SessionProvider } from './src/store/sessionStore';
 import { RootNavigator } from './src/navigation';
 import { resetIdleTimer } from './src/utils/idleTimer';
+import { palette } from './src/ui/theme';
 
 export default function App() {
   useEffect(() => {
@@ -16,10 +17,10 @@ export default function App() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f5f7' }}>
+    <View style={{ flex: 1, backgroundColor: palette.background }}>
       <SessionProvider>
         <SafeAreaProvider>
-          <StatusBar barStyle="dark-content" backgroundColor="#f5f5f7" />
+          <StatusBar barStyle="dark-content" backgroundColor={palette.background} />
           <View
             style={{ flex: 1 }}
             onStartShouldSetResponderCapture={() => {
