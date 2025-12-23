@@ -1,5 +1,5 @@
 import { ENV } from '../config/env';
-import type { AutomationDraft } from '../automations/automationModel';
+import type { AutomationDraft, AutomationAction, AutomationTrigger } from '../automations/automationModel';
 import { compileAutomationDraftToHaConfig } from '../automations/haCompiler';
 import type { HaMode } from './dinodia';
 import type { HaConnection } from '../models/haConnection';
@@ -9,6 +9,11 @@ export type AutomationSummary = {
   alias: string;
   description?: string;
   enabled: boolean;
+  basicSummary?: string;
+  triggerSummary?: string;
+  actionSummary?: string;
+  hasDeviceAction?: boolean;
+  draft?: AutomationDraft | null;
 };
 
 function getPlatformApiBase(): string {
@@ -49,12 +54,23 @@ export async function listAutomations(opts: PlatformOpts = {}): Promise<Automati
     });
     const data = await handleResponse(res);
     if (!Array.isArray(data)) return [];
-    return data.map((item: any) => ({
-      id: String(item.id ?? item.entity_id ?? item.slug ?? ''),
-      alias: String(item.alias ?? item.name ?? 'Automation'),
-      description: typeof item.description === 'string' ? item.description : '',
-      enabled: item.enabled ?? item.state !== 'off',
-    }));
+    const mapped = data.map((item: any) => {
+      const draft = isAutomationDraft(item.draft) ? (item.draft as AutomationDraft) : undefined;
+      const draftSummaries = draft ? summarizeDraft(draft) : {};
+      return {
+        id: String(item.id ?? item.entity_id ?? item.slug ?? ''),
+        alias: String(item.alias ?? item.name ?? 'Automation'),
+        description: typeof item.description === 'string' ? item.description : '',
+        enabled: item.enabled ?? item.state !== 'off',
+        basicSummary: typeof item.basicSummary === 'string' ? item.basicSummary : draftSummaries.basicSummary,
+        triggerSummary: typeof item.triggerSummary === 'string' ? item.triggerSummary : draftSummaries.triggerSummary,
+        actionSummary: typeof item.actionSummary === 'string' ? item.actionSummary : draftSummaries.actionSummary,
+        hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : draftSummaries.hasDeviceAction,
+        draft,
+      };
+    });
+    const enriched = await enrichAutomationsWithHaDetails(mapped, opts);
+    return filterAutomations(enriched);
   } catch (err) {
     const fallback = await maybeListAutomationsViaHa(opts);
     if (fallback) return fallback;
@@ -184,7 +200,7 @@ async function maybeListAutomationsViaHa(opts: PlatformOpts): Promise<Automation
     const res = await haFetch(ha, '/api/states');
     const states = await res.json();
     if (!Array.isArray(states)) return [];
-    return states
+    const base = states
       .filter((s: any) => typeof s?.entity_id === 'string' && s.entity_id.startsWith('automation.'))
       .map((s: any) => ({
         id: s.attributes?.id || s.entity_id.replace('automation.', ''),
@@ -192,6 +208,8 @@ async function maybeListAutomationsViaHa(opts: PlatformOpts): Promise<Automation
         description: s.attributes?.description ?? '',
         enabled: String(s.state || '').toLowerCase() !== 'off',
       }));
+    const enriched = await enrichAutomationsWithHaDetails(base, opts);
+    return filterAutomations(enriched);
   } catch {
     return null;
   }
@@ -236,4 +254,230 @@ async function maybeToggleAutomationViaHa(id: string, enabled: boolean, opts: Pl
   } catch {
     return false;
   }
+}
+
+async function fetchHaAutomationConfig(ha: HaConn, id: string) {
+  try {
+    const res = await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`);
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHaAutomationConfigs(ha: HaConn) {
+  try {
+    const res = await haFetch(ha, '/api/config/automation');
+    const json = await res.json();
+    return Array.isArray(json) ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function entityIdFromTarget(target: any): string | null {
+  if (!target) return null;
+  if (typeof target === 'string' && target.trim().length > 0) return target;
+  const direct = target.entity_id ?? target.device_id ?? target.area_id;
+  if (Array.isArray(direct) && direct.length > 0) return String(direct[0]);
+  if (typeof direct === 'string' && direct.trim().length > 0) return direct;
+  return null;
+}
+
+function actionTargetsDevice(action: any): boolean {
+  if (!action || typeof action !== 'object') return false;
+  if (typeof action.device_id === 'string' && action.device_id.trim().length > 0) return true;
+  const targetEntity = entityIdFromTarget(action.target);
+  if (targetEntity) return true;
+  const directEntity = action.entity_id ?? action.data?.entity_id;
+  if (typeof directEntity === 'string' && directEntity.trim().length > 0) return true;
+  if (Array.isArray(directEntity) && directEntity.length > 0) return true;
+  if (Array.isArray(action.choose)) {
+    return action.choose.some((branch: any) => {
+      if (Array.isArray(branch.sequence) && branch.sequence.some(actionTargetsDevice)) return true;
+      if (Array.isArray(branch.conditions) && branch.conditions.some(actionTargetsDevice)) return true;
+      return false;
+    });
+  }
+  if (Array.isArray(action.sequence)) {
+    return action.sequence.some(actionTargetsDevice);
+  }
+  return false;
+}
+
+function summarizeTrigger(trigger: any): string | null {
+  if (!trigger || typeof trigger !== 'object') return null;
+  const platform = trigger.platform || trigger.kind;
+  switch (platform) {
+    case 'state': {
+      const entityId = trigger.entity_id || trigger.entityId;
+      if (!entityId) return 'State change';
+      const from = trigger.from ?? trigger.from_state;
+      const to = trigger.to ?? trigger.to_state;
+      if (from && to) return `${entityId}: ${from} → ${to}`;
+      if (to) return `${entityId} → ${to}`;
+      if (from) return `${entityId} from ${from}`;
+      return `${entityId} changed`;
+    }
+    case 'numeric_state': {
+      const entityId = trigger.entity_id || trigger.entityId;
+      const attribute = trigger.attribute ? ` (${trigger.attribute})` : '';
+      const above = typeof trigger.above !== 'undefined' ? `>${trigger.above}` : '';
+      const below = typeof trigger.below !== 'undefined' ? `<${trigger.below}` : '';
+      const bounds = [above, below].filter(Boolean).join(' ');
+      return `${entityId || 'Value'}${attribute} ${bounds}`.trim();
+    }
+    case 'numeric_delta': {
+      const entityId = trigger.entityId || trigger.entity_id;
+      const attribute = trigger.attribute ? ` (${trigger.attribute})` : '';
+      const dir = trigger.direction === 'decrease' ? 'decreases' : 'increases';
+      return `${entityId || 'Value'}${attribute} ${dir}`;
+    }
+    case 'position_equals': {
+      const entityId = trigger.entityId || trigger.entity_id;
+      const attribute = trigger.attribute ? ` (${trigger.attribute})` : '';
+      const val = typeof trigger.value !== 'undefined' ? `=${trigger.value}` : '';
+      return `${entityId || 'Position'}${attribute} ${val}`.trim();
+    }
+    case 'time': {
+      const at = trigger.at || trigger.time || '';
+      const daysArr = Array.isArray(trigger.weekday)
+        ? trigger.weekday
+        : Array.isArray(trigger.daysOfWeek)
+        ? trigger.daysOfWeek
+        : [];
+      const days = daysArr.join(', ');
+      if (at && days) return `${days} @ ${at}`;
+      if (at) return `At ${at}`;
+      if (days) return `On ${days}`;
+      return 'Scheduled time';
+    }
+    default:
+      return platform ? String(platform) : null;
+  }
+}
+
+function summarizeTriggers(triggers: any[]): string | undefined {
+  if (!Array.isArray(triggers) || triggers.length === 0) return undefined;
+  const parts = triggers
+    .map((t) => summarizeTrigger(t))
+    .filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
+  if (parts.length === 0) return undefined;
+  return parts.join('; ');
+}
+
+function summarizeAction(action: any): string | null {
+  if (!action || typeof action !== 'object') return null;
+  if (action.kind === 'device_command') {
+    const target = action.entityId || action.entity_id;
+    return target ? `${action.command} → ${target}` : String(action.command);
+  }
+  const targetVal =
+    entityIdFromTarget(action.target) ||
+    (typeof action.entity_id === 'string' ? action.entity_id : null) ||
+    (Array.isArray(action.entity_id) ? action.entity_id.join(', ') : null) ||
+    (typeof action.data?.entity_id === 'string' ? action.data.entity_id : null) ||
+    (Array.isArray(action.data?.entity_id) ? action.data.entity_id.join(', ') : null);
+  const target = typeof targetVal === 'string' ? targetVal : null;
+  if (action.service) {
+    return target ? `${action.service} → ${target}` : String(action.service);
+  }
+  if (action.type) {
+    return target ? `${action.type} → ${target}` : String(action.type);
+  }
+  if (Array.isArray(action.sequence) && action.sequence.length > 0) {
+    const nested = summarizeAction(action.sequence[0]);
+    return nested ? `Sequence: ${nested}` : 'Sequence';
+  }
+  if (Array.isArray(action.choose) && action.choose.length > 0) {
+    return 'Choice action';
+  }
+  return null;
+}
+
+function summarizeActions(actions: any[]): string | undefined {
+  if (!Array.isArray(actions) || actions.length === 0) return undefined;
+  const parts = actions
+    .map((a) => summarizeAction(a))
+    .filter((a): a is string => typeof a === 'string' && a.trim().length > 0);
+  if (parts.length === 0) return undefined;
+  return parts.join('; ');
+}
+
+function isAutomationDraft(value: any): value is AutomationDraft {
+  return value && typeof value === 'object' && Array.isArray(value.actions) && Array.isArray(value.triggers);
+}
+
+function summarizeDraft(draft: AutomationDraft) {
+  const triggerSummary = summarizeTriggers(draft.triggers as unknown as AutomationTrigger[]);
+  const actionSummary = summarizeActions(draft.actions as unknown as AutomationAction[]);
+  const hasDeviceAction = Array.isArray(draft.actions) ? draft.actions.some((a) => a.kind === 'device_command') : undefined;
+  const basicSummary = draft.description || draft.alias;
+  return { triggerSummary, actionSummary, hasDeviceAction, basicSummary };
+}
+
+function findMatchingConfig(item: AutomationSummary, configs: any[]): any | null {
+  const normalize = (v: any) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+  const targetIds = [item.id, `automation.${item.id}`].map(normalize);
+  const targetAlias = normalize(item.alias);
+  for (const cfg of configs) {
+    const cfgId = normalize(cfg.id);
+    const cfgAlias = normalize(cfg.alias);
+    const cfgEntityId = normalize(cfg.entity_id);
+    if (targetIds.includes(cfgId) || targetIds.includes(cfgEntityId) || (cfgAlias && cfgAlias === targetAlias)) {
+      return cfg;
+    }
+  }
+  return null;
+}
+
+async function enrichAutomationsWithHaDetails(list: AutomationSummary[], opts: PlatformOpts): Promise<AutomationSummary[]> {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha || list.length === 0) return list;
+  let cachedConfigs: any[] | null = null;
+
+  const ensureConfigs = async () => {
+    if (cachedConfigs !== null) return cachedConfigs;
+    cachedConfigs = await fetchHaAutomationConfigs(ha);
+    return cachedConfigs;
+  };
+
+  const enriched = await Promise.all(
+    list.map(async (item) => {
+      if (item.triggerSummary && item.actionSummary && typeof item.hasDeviceAction === 'boolean') {
+        return item;
+      }
+      let config = await fetchHaAutomationConfig(ha, item.id);
+      if (!config) {
+        const allConfigs = await ensureConfigs();
+        if (allConfigs) {
+          config = findMatchingConfig(item, allConfigs);
+        }
+      }
+      if (!config) return item;
+      const triggers = Array.isArray(config.trigger) ? config.trigger : [];
+      const actions = Array.isArray(config.action) ? config.action : [];
+      const triggerSummary = summarizeTriggers(triggers);
+      const actionSummary = summarizeActions(actions);
+      const hasDeviceAction = actions.length > 0 ? actions.some(actionTargetsDevice) : false;
+      return {
+        ...item,
+        description: item.description || config.description || '',
+        basicSummary: item.basicSummary || config.description || config.alias || item.alias,
+        triggerSummary: item.triggerSummary || triggerSummary,
+        actionSummary: item.actionSummary || actionSummary,
+        hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : hasDeviceAction,
+      };
+    })
+  );
+  return enriched;
+}
+
+function filterAutomations(list: AutomationSummary[]): AutomationSummary[] {
+  return list.filter((item) => {
+    const alias = (item.alias || '').toLowerCase();
+    const description = (item.description || '').toLowerCase();
+    const isDefault = alias.includes('default') || description.includes('default');
+    return !isDefault;
+  });
 }

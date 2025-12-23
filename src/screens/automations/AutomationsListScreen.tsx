@@ -9,11 +9,10 @@ import {
   Alert,
   RefreshControl,
   SafeAreaView,
-  Switch,
   NativeModules,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { listAutomations, setAutomationEnabled, deleteAutomation, type AutomationSummary } from '../../api/automations';
+import { listAutomations, deleteAutomation, type AutomationSummary } from '../../api/automations';
 import { useNavigation } from '@react-navigation/native';
 import { useSession } from '../../store/sessionStore';
 import { palette, maxContentWidth, radii, shadows, spacing, typography } from '../../ui/theme';
@@ -67,18 +66,6 @@ export function AutomationsListScreen({}: Props) {
       setRefreshing(false);
     }
   }, []);
-
-  const handleToggleEnabled = useCallback(
-    async (id: string, enabled: boolean) => {
-      try {
-        await setAutomationEnabled(id, !enabled, { haConnection: session.haConnection, mode: haMode });
-        await refresh();
-      } catch (err: any) {
-        Alert.alert('Could not update', err?.message ?? 'Unable to toggle automation');
-      }
-    },
-    [refresh]
-  );
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -163,30 +150,31 @@ export function AutomationsListScreen({}: Props) {
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.item}
-                  onPress={() =>
-                    navigation.navigate('AutomationEditor' as never, { automationId: item.id, alias: item.alias, description: item.description } as never)
-                  }
-                  activeOpacity={0.9}
-                >
-                  <View style={{ flex: 1 }}>
+                <View style={styles.item}>
+                  <View style={{ flex: 1, gap: spacing.xs }}>
                     <Text style={styles.itemTitle}>{item.alias}</Text>
                     {item.description ? <Text style={styles.itemSubtitle}>{item.description}</Text> : null}
-                    <Text style={styles.itemStatus}>{item.enabled ? 'Enabled' : 'Disabled'}</Text>
+                    <View style={styles.summaryGroup}>
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Basic</Text>
+                        <Text style={styles.summaryText}>{item.basicSummary || item.description || 'No summary from Home Assistant yet.'}</Text>
+                      </View>
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Trigger</Text>
+                        <Text style={styles.summaryText}>{item.triggerSummary || 'Trigger info not available.'}</Text>
+                      </View>
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>Action</Text>
+                        <Text style={styles.summaryText}>{item.actionSummary || 'Action info not available.'}</Text>
+                      </View>
+                    </View>
                   </View>
                   <View style={styles.itemActions}>
-                    <Switch
-                      value={item.enabled}
-                      onValueChange={() => handleToggleEnabled(item.id, item.enabled)}
-                      thumbColor="#fff"
-                      trackColor={{ true: palette.primary, false: '#d1d5db' }}
-                    />
                     <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
                       <Text style={styles.deleteText}>Delete</Text>
                     </TouchableOpacity>
                   </View>
-                </TouchableOpacity>
+                </View>
               )}
               ListEmptyComponent={
                 <View style={styles.empty}>
@@ -263,4 +251,16 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: 40, alignItems: 'center' },
   emptyText: { color: palette.text, fontSize: 16, fontWeight: '700' },
   emptySub: { color: palette.textMuted, marginTop: 4 },
+  summaryGroup: {
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    backgroundColor: palette.background,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  summaryRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  summaryLabel: { width: 70, fontSize: 12, color: palette.textMuted, fontWeight: '700' },
+  summaryText: { flex: 1, fontSize: 12, color: palette.text },
 });

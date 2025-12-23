@@ -44,6 +44,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const automationId = route.params?.automationId as string | undefined;
   const initialAlias = route.params?.alias as string | undefined;
   const initialDescription = route.params?.description as string | undefined;
+  const initialDraft = route.params?.draft as AutomationDraft | undefined;
   const isEditing = Boolean(automationId);
   const { session, haMode, setHaMode, clearSession } = useSession();
   const userId = session.user?.id!;
@@ -54,10 +55,10 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const isCloud = haMode === 'cloud';
 
   const eligibleDevices = useMemo(() => getEligibleDevicesForAutomations(devices), [devices]);
-  const [alias, setAlias] = useState(initialAlias ?? (isEditing ? 'Edit automation' : 'New automation'));
-  const [description, setDescription] = useState(initialDescription ?? '');
+  const [alias, setAlias] = useState(initialDraft?.alias ?? initialAlias ?? (isEditing ? 'Edit automation' : 'New automation'));
+  const [description, setDescription] = useState(initialDraft?.description ?? initialDescription ?? '');
 
-  const [triggerDeviceId, setTriggerDeviceId] = useState<string | null>(eligibleDevices[0]?.entityId ?? null);
+  const [triggerDeviceId, setTriggerDeviceId] = useState<string | null>(null);
   const [actionDeviceId, setActionDeviceId] = useState<string | null>(eligibleDevices[0]?.entityId ?? null);
 
   const triggerDevice = triggerDeviceId ? eligibleDevices.find((d) => d.entityId === triggerDeviceId) ?? null : null;
@@ -68,11 +69,69 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const [selectedTriggerId, setSelectedTriggerId] = useState<string | null>(triggerSpecs[0]?.id ?? null);
   const [selectedActionId, setSelectedActionId] = useState<string | null>(actionSpecs[0]?.id ?? null);
   const [actionValue, setActionValue] = useState<number | undefined>(undefined);
-  const [daysOfWeek, setDaysOfWeek] = useState<string[]>([]);
+  const [anyTime, setAnyTime] = useState(true);
+  const [daysOfWeek, setDaysOfWeek] = useState<string[]>([...WEEKDAYS]);
   const [timeHour, setTimeHour] = useState<string | null>(null);
   const [timeMinute, setTimeMinute] = useState<string | null>(null);
   const [showHourDropdown, setShowHourDropdown] = useState(false);
   const [showMinuteDropdown, setShowMinuteDropdown] = useState(false);
+  const [pendingPrefillAction, setPendingPrefillAction] = useState<AutomationAction | null>(
+    initialDraft?.actions?.[0] ?? null
+  );
+  const [pendingPrefillTrigger, setPendingPrefillTrigger] = useState<AutomationTrigger | null>(
+    initialDraft?.triggers?.[0] ?? null
+  );
+  const [prefillApplied, setPrefillApplied] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing || !initialDraft || prefillApplied) return;
+    setAlias(initialDraft.alias ?? initialAlias ?? alias);
+    setDescription(initialDraft.description ?? initialDescription ?? '');
+
+    if (Array.isArray(initialDraft.daysOfWeek) && initialDraft.daysOfWeek.length > 0) {
+      setDaysOfWeek(initialDraft.daysOfWeek);
+    }
+    const time = initialDraft.triggerTime || (initialDraft.triggers?.find((t) => t.kind === 'time') as any)?.at;
+    if (typeof time === 'string' && time.includes(':')) {
+      const [h, m] = time.split(':');
+      if (h) setTimeHour(h.padStart(2, '0'));
+      if (m) setTimeMinute(m.padStart(2, '0'));
+    }
+
+    const firstTrigger = initialDraft.triggers?.[0];
+    const hasTimeTrigger = firstTrigger?.kind === 'time';
+    setAnyTime(!hasTimeTrigger);
+    if (firstTrigger) {
+      if (firstTrigger.kind === 'time') {
+        setTriggerDeviceId(null);
+        setSelectedTriggerId(null);
+        if (Array.isArray((firstTrigger as any).daysOfWeek)) {
+          setDaysOfWeek((firstTrigger as any).daysOfWeek as string[]);
+        }
+      } else if ((firstTrigger as any).entityId) {
+        setTriggerDeviceId((firstTrigger as any).entityId);
+      }
+      setPendingPrefillTrigger(firstTrigger);
+    }
+
+    const firstAction = initialDraft.actions?.[0];
+    if (firstAction) {
+      if ((firstAction as any).entityId) setActionDeviceId((firstAction as any).entityId);
+      if (typeof (firstAction as any).value === 'number') setActionValue((firstAction as any).value);
+      setPendingPrefillAction(firstAction);
+    }
+
+    setPrefillApplied(true);
+  }, [initialDraft, isEditing, prefillApplied, initialAlias, initialDescription]);
+
+  useEffect(() => {
+    setShowHourDropdown(false);
+    setShowMinuteDropdown(false);
+    if (!anyTime) {
+      setTriggerDeviceId(null);
+      setSelectedTriggerId(null);
+    }
+  }, [anyTime]);
 
   useEffect(() => {
     if (!triggerDevice) {
@@ -86,6 +145,20 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     const fallback = triggerSpecs[0]?.id ?? null;
     setSelectedTriggerId(fallback);
   }, [triggerDeviceId]);
+
+  useEffect(() => {
+    if (!pendingPrefillTrigger) return;
+    if (pendingPrefillTrigger.kind === 'time') {
+      setPendingPrefillTrigger(null);
+      return;
+    }
+    if (!triggerDevice) return;
+    const match = findMatchingTriggerSpec(pendingPrefillTrigger, triggerSpecs);
+    if (match) {
+      setSelectedTriggerId(match.id);
+    }
+    setPendingPrefillTrigger(null);
+  }, [pendingPrefillTrigger, triggerSpecs, triggerDevice]);
 
   useEffect(() => {
     if (actionDevice && actionSpecs.length > 0) {
@@ -102,6 +175,15 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   }, [actionDeviceId, actionDevice]);
 
   useEffect(() => {
+    if (!pendingPrefillAction || !actionDevice) return;
+    const match = findMatchingActionSpec(pendingPrefillAction, actionSpecs);
+    if (match) {
+      setSelectedActionId(match.id);
+    }
+    setPendingPrefillAction(null);
+  }, [pendingPrefillAction, actionSpecs, actionDevice]);
+
+  useEffect(() => {
     if (actionDeviceId === null && eligibleDevices.length > 0) {
       setActionDeviceId(eligibleDevices[0].entityId);
     }
@@ -109,6 +191,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
 
   // Ensure time defaults when days are selected; hide/clear when not.
   useEffect(() => {
+    if (anyTime) return;
     if (daysOfWeek.length === 0) {
       setTimeHour(null);
       setTimeMinute(null);
@@ -118,7 +201,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
       if (!timeHour) setTimeHour('00');
       if (!timeMinute) setTimeMinute('00');
     }
-  }, [daysOfWeek, timeHour, timeMinute]);
+  }, [anyTime, daysOfWeek, timeHour, timeMinute]);
 
   const handleToggleMode = () => {
     const next = isCloud ? 'home' : 'cloud';
@@ -140,13 +223,11 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   };
 
   const save = async () => {
-    // Trigger device can be none; if so, we skip device-based triggers.
     if (!actionDevice || !selectedActionId) {
       Alert.alert('Choose an action device and action to continue.');
       return;
     }
     const actionSpec = actionSpecs.find((a) => a.id === selectedActionId);
-    const triggerSpec = triggerDevice && selectedTriggerId ? triggerSpecs.find((t) => t.id === selectedTriggerId) : null;
 
     if (!actionSpec) {
       Alert.alert('Please choose an action.');
@@ -155,15 +236,29 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
 
     const actions: AutomationAction[] = [toActionDraft(actionSpec, actionDevice, actionValue)];
     const triggers: AutomationTrigger[] = [];
-    if (triggerSpec) {
-      triggers.push(toTriggerDraft(triggerSpec, triggerDevice!));
-    } else if (daysOfWeek.length > 0 || (timeHour && timeMinute)) {
-      const timeValue = buildTimeValue(timeHour, timeMinute) ?? '00:00';
+
+    if (anyTime) {
+      if (!triggerDevice || !selectedTriggerId) {
+        Alert.alert('Please select a trigger device and condition.');
+        return;
+      }
+      const triggerSpec = triggerSpecs.find((t) => t.id === selectedTriggerId);
+      if (!triggerSpec) {
+        Alert.alert('Please select a trigger condition.');
+        return;
+      }
+      triggers.push(toTriggerDraft(triggerSpec, triggerDevice));
+    } else {
+      if (daysOfWeek.length === 0) {
+        Alert.alert('Select at least one day for the time trigger.');
+        return;
+      }
+      const timeValue = buildTimeValue(timeHour, timeMinute);
+      if (!timeValue) {
+        Alert.alert('Choose a specific time (HH:MM).');
+        return;
+      }
       triggers.push({ kind: 'time', at: timeValue, daysOfWeek });
-    }
-    if (triggers.length === 0) {
-      Alert.alert('Please select a trigger device/condition or choose days/time.');
-      return;
     }
 
     const draft: AutomationDraft = {
@@ -174,7 +269,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
       actions,
       mode: 'single',
       daysOfWeek,
-      triggerTime: buildTimeValue(timeHour, timeMinute),
+      triggerTime: anyTime ? null : buildTimeValue(timeHour, timeMinute),
     };
 
     try {
@@ -201,8 +296,13 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
       />
       <ScrollView contentContainerStyle={[styles.container, isWide && styles.containerWide]}>
         <View style={styles.headerBlock}>
-          <Text style={styles.title}>{isEditing ? 'Edit Automation' : 'Create Automation'}</Text>
-          <Text style={styles.subtitle}>Build beautiful flows for your home.</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>{isEditing ? 'Edit Automation' : 'Create Automation'}</Text>
+            <Text style={styles.subtitle}>Build beautiful flows for your home.</Text>
+          </View>
+          <TouchableOpacity style={styles.closeButton} onPress={() => navigation.goBack()}>
+            <Text style={styles.closeButtonText}>Close</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.surface}>
@@ -227,43 +327,52 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
           <View style={[styles.sectionCard, styles.sectionHalf]}>
             <Text style={styles.sectionTitle}>Trigger</Text>
             <View style={styles.field}>
-              <Text style={styles.label}>Days (optional)</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
-                {WEEKDAYS.map((day) => {
-                  const selected = daysOfWeek.includes(day);
-                  return (
-                    <TouchableOpacity
-                      key={day}
-                      style={[styles.chip, selected && styles.chipSelected]}
-                      onPress={() => {
-                        setDaysOfWeek((prev) =>
-                          prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
-                        );
-                      }}
-                      disabled={refreshing}
-                    >
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                        {day.toUpperCase()}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+              <Text style={styles.label}>Time</Text>
+              <View style={styles.timeBlock}>
+                <Text style={[styles.label, styles.subLabel]}>Days (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+                  {WEEKDAYS.map((day) => {
+                    const selected = daysOfWeek.includes(day);
+                    return (
+                      <TouchableOpacity
+                        key={day}
+                        style={[
+                          styles.chip,
+                          selected && styles.chipSelected
+                        ]}
+                        onPress={() => {
+                          setDaysOfWeek((prev) =>
+                            prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+                          );
+                        }}
+                        disabled={refreshing}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selected && styles.chipTextSelected
+                          ]}
+                        >
+                          {day.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
 
-            {daysOfWeek.length > 0 && (
-              <View style={styles.field}>
-                <Text style={styles.label}>Time (required when days selected)</Text>
-                <View style={styles.dropdownRow}>
-                  <View style={styles.dropdown}>
+                <View style={{ height: spacing.xs }} />
+                <Text style={[styles.label, styles.subLabel, anyTime && styles.disabledText]}>Specific time</Text>
+                <View style={[styles.dropdownRow, styles.timeRow]}>
+                  <View style={[styles.dropdown, anyTime && styles.dropdownDisabled]}>
                     <TouchableOpacity
                       style={styles.dropdownHeader}
                       onPress={() => {
                         setShowHourDropdown((v) => !v);
                         setShowMinuteDropdown(false);
                       }}
+                      disabled={anyTime}
                     >
-                      <Text style={styles.dropdownHeaderText}>{timeHour ?? 'HH'}</Text>
+                      <Text style={[styles.dropdownHeaderText, anyTime && styles.disabledText]}>{timeHour ?? 'HH'}</Text>
                     </TouchableOpacity>
                     {showHourDropdown && (
                       <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
@@ -282,16 +391,17 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
                       </ScrollView>
                     )}
                   </View>
-                  <Text style={styles.timeDivider}>:</Text>
-                  <View style={styles.dropdown}>
+                  <Text style={[styles.timeDivider, anyTime && styles.disabledText]}>:</Text>
+                  <View style={[styles.dropdown, anyTime && styles.dropdownDisabled]}>
                     <TouchableOpacity
                       style={styles.dropdownHeader}
                       onPress={() => {
                         setShowMinuteDropdown((v) => !v);
                         setShowHourDropdown(false);
                       }}
+                      disabled={anyTime}
                     >
-                      <Text style={styles.dropdownHeaderText}>{timeMinute ?? 'MM'}</Text>
+                      <Text style={[styles.dropdownHeaderText, anyTime && styles.disabledText]}>{timeMinute ?? 'MM'}</Text>
                     </TouchableOpacity>
                     {showMinuteDropdown && (
                       <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
@@ -310,12 +420,20 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
                       </ScrollView>
                     )}
                   </View>
+                  <TouchableOpacity
+                    style={[styles.anyTimeButton, anyTime && styles.anyTimeButtonActive]}
+                    onPress={() => {
+                      setAnyTime((prev) => !prev);
+                    }}
+                  >
+                    <Text style={[styles.anyTimeText, anyTime && styles.anyTimeTextActive]}>Any Time</Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                  <Text style={styles.helper}>
+                  <Text style={[styles.helper, anyTime && styles.disabledText]}>
                     {timeHour && timeMinute ? `Selected: ${timeHour}:${timeMinute}` : 'No time set'}
                   </Text>
-                  {(timeHour || timeMinute) && (
+                  {(timeHour || timeMinute) && !anyTime && (
                     <TouchableOpacity
                       style={[styles.chip, { marginLeft: 10 }]}
                       onPress={() => {
@@ -330,59 +448,68 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
                   )}
                 </View>
               </View>
-            )}
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Trigger device</Text>
-              {eligibleDevices.length === 0 ? (
-                <Text style={styles.helper}>No eligible devices for automations.</Text>
+              {anyTime ? (
+                <Text style={styles.helper}>Any time (00:00–23:59). You can still pick days to limit when it runs.</Text>
               ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
-                  <TouchableOpacity
-                    key="none"
-                    style={[styles.chip, triggerDeviceId === null && styles.chipSelected]}
-                    onPress={() => setTriggerDeviceId(null)}
-                    disabled={refreshing}
-                  >
-                    <Text style={[styles.chipText, triggerDeviceId === null && styles.chipTextSelected]}>None</Text>
-                  </TouchableOpacity>
-                  {eligibleDevices.map((d) => {
-                    const selected = d.entityId === triggerDeviceId;
-                    return (
-                      <TouchableOpacity
-                        key={d.entityId}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        onPress={() => setTriggerDeviceId(d.entityId)}
-                        disabled={refreshing}
-                      >
-                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{d.name}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                <Text style={styles.helper}>Select at least one day and a time.</Text>
               )}
             </View>
 
-            {triggerDevice && (
-              <View style={styles.field}>
-                <Text style={styles.label}>Trigger condition</Text>
-                {triggerSpecs.length === 0 ? (
-                  <Text style={styles.helper}>No triggers available for this device.</Text>
-                ) : (
-                  triggerSpecs.map((t) => {
-                    const selected = t.id === selectedTriggerId;
-                    return (
+            {anyTime && (
+              <>
+                <View style={styles.field}>
+                  <Text style={styles.label}>Trigger device</Text>
+                  {eligibleDevices.length === 0 ? (
+                    <Text style={styles.helper}>No eligible devices for automations.</Text>
+                  ) : (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
                       <TouchableOpacity
-                        key={t.id}
-                        style={[styles.rowItem, selected && styles.rowItemSelected]}
-                        onPress={() => setSelectedTriggerId(t.id)}
+                        key="none"
+                        style={[styles.chip, triggerDeviceId === null && styles.chipSelected]}
+                        onPress={() => setTriggerDeviceId(null)}
+                        disabled={refreshing}
                       >
-                        <Text style={[styles.rowItemText, selected && styles.rowItemTextSelected]}>{t.label}</Text>
+                        <Text style={[styles.chipText, triggerDeviceId === null && styles.chipTextSelected]}>None</Text>
                       </TouchableOpacity>
-                    );
-                  })
+                      {eligibleDevices.map((d) => {
+                        const selected = d.entityId === triggerDeviceId;
+                        return (
+                          <TouchableOpacity
+                            key={d.entityId}
+                            style={[styles.chip, selected && styles.chipSelected]}
+                            onPress={() => setTriggerDeviceId(d.entityId)}
+                            disabled={refreshing}
+                          >
+                            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{d.name}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                </View>
+
+                {triggerDevice && (
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Trigger condition</Text>
+                    {triggerSpecs.length === 0 ? (
+                      <Text style={styles.helper}>No triggers available for this device.</Text>
+                    ) : (
+                      triggerSpecs.map((t) => {
+                        const selected = t.id === selectedTriggerId;
+                        return (
+                          <TouchableOpacity
+                            key={t.id}
+                            style={[styles.rowItem, selected && styles.rowItemSelected]}
+                            onPress={() => setSelectedTriggerId(t.id)}
+                          >
+                            <Text style={[styles.rowItemText, selected && styles.rowItemTextSelected]}>{t.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </View>
                 )}
-              </View>
+              </>
             )}
           </View>
 
@@ -526,6 +653,34 @@ function buildTimeValue(hour: string | null, minute: string | null): string | nu
   return `${hour}:${minute}`;
 }
 
+function findMatchingActionSpec(action: AutomationAction, specs: DeviceActionSpec[]): DeviceActionSpec | null {
+  if (action.kind !== 'device_command') return null;
+  return (
+    specs.find((s) => s.kind === 'button' && s.command === action.command) ||
+    specs.find((s) => s.kind === 'fixed' && s.command === action.command) ||
+    specs.find((s) => s.kind === 'slider' && s.command === action.command) ||
+    specs.find((s) => s.kind === 'toggle' && (s.commandOn === action.command || s.commandOff === action.command)) ||
+    null
+  );
+}
+
+function findMatchingTriggerSpec(trigger: AutomationTrigger, specs: DeviceTriggerSpec[]): DeviceTriggerSpec | null {
+  switch (trigger.kind) {
+    case 'state':
+      return specs.find((s) => s.kind === 'state' && s.entityState === trigger.to) ?? null;
+    case 'numeric_delta':
+      return specs.find(
+        (s) => s.kind === 'attribute_delta' && s.attribute === trigger.attribute && s.direction === trigger.direction
+      ) ?? null;
+    case 'position_equals':
+      return specs.find((s) => s.kind === 'position' && s.equals === trigger.value) ?? null;
+    case 'time':
+      return specs.find((s) => s.kind === 'time') ?? null;
+    default:
+      return null;
+  }
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
   container: {
@@ -540,6 +695,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
     width: '100%',
     maxWidth: maxContentWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: { ...typography.heading },
   subtitle: { color: palette.textMuted },
@@ -632,4 +790,36 @@ const styles = StyleSheet.create({
   },
   dropdownItemText: { color: palette.text, fontSize: 14 },
   timeDivider: { marginHorizontal: 6, fontWeight: '700', color: palette.text },
+  anyTimeButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    backgroundColor: palette.surface,
+  },
+  anyTimeButtonActive: { backgroundColor: '#111', borderColor: '#111' },
+  anyTimeText: { color: palette.text, fontWeight: '700' },
+  anyTimeTextActive: { color: '#fff' },
+  timeBlock: {
+    marginTop: spacing.xs,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    borderRadius: radii.md,
+    backgroundColor: palette.surface,
+  },
+  subLabel: { fontSize: 12, color: palette.textMuted, marginBottom: 4 },
+  dropdownDisabled: { opacity: 0.7 },
+  disabledText: { color: palette.textMuted },
+  timeRow: { flexWrap: 'nowrap', gap: spacing.sm },
+  closeButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    backgroundColor: palette.surface,
+  },
+  closeButtonText: { color: palette.text, fontWeight: '700' },
 });
