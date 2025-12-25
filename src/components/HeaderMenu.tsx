@@ -4,23 +4,11 @@ import { palette, radii, shadows, spacing } from '../ui/theme';
 
 type Props = {
   visible: boolean;
-  isCloud: boolean;
   onClose: () => void;
-  onToggleMode: () => void;
-  onOpenWifi: () => void;
   onLogout: () => void;
 };
 
-export function HeaderMenu({
-  visible,
-  isCloud,
-  onClose,
-  onToggleMode,
-  onOpenWifi,
-  onLogout,
-}: Props) {
-  const modeLabel = isCloud ? 'Move to Home Mode' : 'Move to Cloud Mode';
-
+export function HeaderMenu({ visible, onClose, onLogout }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -28,28 +16,6 @@ export function HeaderMenu({
       </Pressable>
       <View style={styles.menuContainer}>
         <View style={styles.menuCard}>
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              onToggleMode();
-              onClose();
-            }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.menuItemText}>{modeLabel}</Text>
-          </TouchableOpacity>
-          <View style={styles.divider} />
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              onOpenWifi();
-              onClose();
-            }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.menuItemText}>Wi‑Fi Options</Text>
-          </TouchableOpacity>
-          <View style={styles.divider} />
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => {
@@ -93,10 +59,5 @@ const styles = StyleSheet.create({
   },
   logoutText: {
     color: palette.danger,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: palette.outline,
-    marginHorizontal: spacing.md,
   },
 });

@@ -8,17 +8,49 @@ export type AuthUser = {
   role: Role;
 };
 
+export type LoginStep =
+  | { status: 'OK'; role: Role }
+  | { status: 'NEEDS_EMAIL' }
+  | { status: 'CHALLENGE'; challengeId: string };
+
+export type ChallengeStatus = 'PENDING' | 'APPROVED' | 'CONSUMED' | 'EXPIRED' | 'NOT_FOUND';
+
 type LoginResponse = {
-  ok: boolean;
+  ok?: boolean;
   role?: Role;
-  user?: AuthUser;
+  requiresEmailVerification?: boolean;
+  needsEmailInput?: boolean;
+  challengeId?: string;
   error?: string;
 };
 
-const LOGIN_PATH = '/auth-login'; // implemented on backend (Edge Function)
+type ChallengeStatusResponse = {
+  status?: ChallengeStatus;
+  error?: string;
+};
 
-async function apiFetch<T>(path: string, options: RequestInit): Promise<T> {
-  const url = `${ENV.AUTH_BASE_URL}${path}`;
+type ChallengeCompleteResponse = {
+  ok?: boolean;
+  role?: Role;
+  error?: string;
+};
+
+const LOGIN_PATH = '/api/auth/login';
+const LOGOUT_PATH = '/api/auth/logout';
+const CHALLENGE_PATH = '/api/auth/challenges';
+const ADMIN_CHANGE_PASSWORD_PATH = '/api/admin/profile/change-password';
+const TENANT_CHANGE_PASSWORD_PATH = '/api/tenant/profile/change-password';
+
+function getPlatformBase(): string {
+  const raw = (ENV.DINODIA_PLATFORM_API || '').trim();
+  if (!raw) {
+    throw new Error('Login is not available right now. Please try again in a moment.');
+  }
+  return raw.replace(/\/+$/, '');
+}
+
+async function platformFetch<T>(path: string, options: RequestInit): Promise<T> {
+  const url = `${getPlatformBase()}${path}`;
   if (__DEV__) {
     // eslint-disable-next-line no-console
     console.log('[auth] fetch', url, options);
@@ -27,10 +59,9 @@ async function apiFetch<T>(path: string, options: RequestInit): Promise<T> {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      apikey: ENV.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${ENV.SUPABASE_ANON_KEY}`,
       ...(options.headers || {}),
     },
+    credentials: 'include',
   });
   const data = (await res.json().catch(() => ({}))) as T;
   if (!res.ok) {
@@ -43,35 +74,53 @@ async function apiFetch<T>(path: string, options: RequestInit): Promise<T> {
   return data;
 }
 
-export async function loginWithCredentials(
-  username: string,
-  password: string
-): Promise<AuthUser> {
-  const trimmedUsername = username.trim();
-  if (!trimmedUsername || !password) {
+export async function loginWithCredentials(params: {
+  username: string;
+  password: string;
+  deviceId: string;
+  deviceLabel: string;
+  email?: string;
+}): Promise<LoginStep> {
+  const trimmedUsername = params.username.trim();
+  if (!trimmedUsername || !params.password) {
     throw new Error('Enter both username and password to sign in.');
   }
 
-  if (!ENV.AUTH_BASE_URL) {
-    throw new Error('Login is not available right now. Please try again in a moment.');
+  const payload: Record<string, string> = {
+    username: trimmedUsername,
+    password: params.password,
+    deviceId: params.deviceId,
+    deviceLabel: params.deviceLabel,
+  };
+  if (params.email && params.email.trim().length > 0) {
+    payload.email = params.email.trim();
   }
 
   try {
-    const body = JSON.stringify({ username: trimmedUsername, password });
-    const data = await apiFetch<LoginResponse>(LOGIN_PATH, {
+    const data = await platformFetch<LoginResponse>(LOGIN_PATH, {
       method: 'POST',
-      body,
+      body: JSON.stringify(payload),
     });
 
-    if (!data.ok || !data.user) {
-      throw new Error(
-        typeof data.error === 'string' && data.error.trim().length > 0
-          ? data.error
-          : 'We could not find that username and password. Please try again.'
-      );
+    if (data.requiresEmailVerification) {
+      if (data.needsEmailInput) {
+        return { status: 'NEEDS_EMAIL' };
+      }
+      if (data.challengeId) {
+        return { status: 'CHALLENGE', challengeId: data.challengeId };
+      }
+      throw new Error('Email verification is required to continue.');
     }
 
-    return data.user;
+    if (data.ok && data.role) {
+      return { status: 'OK', role: data.role };
+    }
+
+    throw new Error(
+      typeof data.error === 'string' && data.error.trim().length > 0
+        ? data.error
+        : 'We could not log you in right now. Please try again.'
+    );
   } catch (err) {
     if (err instanceof Error) {
       throw new Error(err.message || 'We could not log you in right now. Please try again.');
@@ -80,9 +129,55 @@ export async function loginWithCredentials(
   }
 }
 
-// For change password endpoints, mirror your Next.js:
-// - /admin/profile/change-password
-// - /tenant/profile/change-password
+export async function fetchChallengeStatus(challengeId: string): Promise<ChallengeStatus> {
+  const url = `${getPlatformBase()}${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  if (res.status === 404) {
+    return 'NOT_FOUND';
+  }
+  const data = (await res.json().catch(() => ({}))) as ChallengeStatusResponse;
+  if (!res.ok) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  if (data.status) {
+    return data.status;
+  }
+  throw new Error('Invalid verification status response.');
+}
+
+export async function completeChallenge(
+  challengeId: string,
+  deviceId: string,
+  deviceLabel: string
+): Promise<{ role: Role }> {
+  const data = await platformFetch<ChallengeCompleteResponse>(
+    `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}/complete`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, deviceLabel }),
+    }
+  );
+  if (data.ok && data.role) {
+    return { role: data.role };
+  }
+  throw new Error(
+    typeof data.error === 'string' && data.error.trim().length > 0
+      ? data.error
+      : 'We could not complete verification. Please try again.'
+  );
+}
+
+export async function resendChallenge(challengeId: string): Promise<void> {
+  await platformFetch<{ ok?: boolean }>(
+    `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}/resend`,
+    { method: 'POST' }
+  );
+}
+
 export async function changePassword(opts: {
   currentPassword: string;
   newPassword: string;
@@ -91,9 +186,9 @@ export async function changePassword(opts: {
 }): Promise<void> {
   const path =
     opts.role === 'ADMIN'
-      ? '/auth/admin/change-password'
-      : '/auth/tenant/change-password';
-  await apiFetch<{ ok: boolean }>(path, {
+      ? ADMIN_CHANGE_PASSWORD_PATH
+      : TENANT_CHANGE_PASSWORD_PATH;
+  await platformFetch<{ ok: boolean }>(path, {
     method: 'POST',
     body: JSON.stringify({
       currentPassword: opts.currentPassword,
@@ -104,10 +199,9 @@ export async function changePassword(opts: {
 }
 
 // Logout: just clear local session on mobile.
-// If your backend issues cookies, you may also call a /logout endpoint.
 export async function logoutRemote(): Promise<void> {
   try {
-    await apiFetch<{ ok: boolean }>('/auth/logout', { method: 'POST', body: '{}' });
+    await platformFetch<{ ok?: boolean }>(LOGOUT_PATH, { method: 'POST' });
   } catch {
     // ignore
   }

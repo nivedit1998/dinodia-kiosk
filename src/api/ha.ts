@@ -121,6 +121,19 @@ async function callHomeAssistantAPI<T>(
   return (await res.json()) as T;
 }
 
+export async function callHaApi<T>(
+  ha: HaConnectionLike,
+  path: string,
+  init?: RequestInit,
+  timeoutMs = 5000
+): Promise<T> {
+  return callHomeAssistantAPI<T>(ha, path, init, timeoutMs);
+}
+
+export async function listHaStates(ha: HaConnectionLike): Promise<HAState[]> {
+  return callHomeAssistantAPI<HAState[]>(ha, '/api/states');
+}
+
 async function renderHomeAssistantTemplate<T>(
   ha: HaConnectionLike,
   template: string,

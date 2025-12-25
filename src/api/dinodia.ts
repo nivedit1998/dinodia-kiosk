@@ -1,7 +1,6 @@
 // src/api/dinodia.ts
 import { supabase } from './supabaseClient';
 import type { User } from '../models/user';
-import type { Role } from '../models/roles';
 import type { HaConnection } from '../models/haConnection';
 import type { AccessRule } from '../models/accessRule';
 import type { UIDevice, DeviceOverride } from '../models/device';
@@ -9,6 +8,8 @@ import { getDevicesWithMetadata, EnrichedDevice, HaConnectionLike, probeHaReacha
 import { classifyDeviceByLabel } from '../utils/labelCatalog';
 
 export type HaMode = 'home' | 'cloud';
+export const HOME_WIFI_PROMPT =
+  'To use Home mode connect to your home Wi-Fi by clicking the Wi-Fi name in the navigation bar';
 
 type UserWithRelations = User & {
   accessRules?: AccessRule[];
@@ -17,7 +18,7 @@ type UserWithRelations = User & {
 async function fetchUserWithRelations(userId: number): Promise<UserWithRelations | null> {
   const { data, error } = await supabase
     .from('User')
-    .select('id, username, role, haConnectionId')
+    .select('id, username, role, homeId, haConnectionId')
     .eq('id', userId)
     .single();
 
@@ -37,20 +38,31 @@ async function fetchUserWithRelations(userId: number): Promise<UserWithRelations
   return user;
 }
 
-async function fetchHaConnectionById(id: number): Promise<HaConnection | null> {
-  const { data, error } = await supabase.from('HaConnection').select('*').eq('id', id).single();
-  if (error || !data) return null;
-  return data as HaConnection;
+export async function fetchUserByUsername(username: string): Promise<User | null> {
+  const trimmed = username.trim();
+  if (!trimmed) return null;
+  const { data, error } = await supabase
+    .from('User')
+    .select('id, username, role, homeId, haConnectionId')
+    .eq('username', trimmed)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return data as User;
 }
 
-async function fetchHaConnectionOwnedBy(userId: number): Promise<HaConnection | null> {
+async function fetchHomeHaConnectionId(homeId: number): Promise<number | null> {
   const { data, error } = await supabase
-    .from('HaConnection')
-    .select('*')
-    .eq('ownerId', userId)
-    .limit(1)
-    .maybeSingle();
+    .from('Home')
+    .select('haConnectionId')
+    .eq('id', homeId)
+    .single();
+  if (error || !data) return null;
+  return (data as { haConnectionId?: number | null }).haConnectionId ?? null;
+}
 
+async function fetchHaConnectionById(id: number): Promise<HaConnection | null> {
+  const { data, error } = await supabase.from('HaConnection').select('*').eq('id', id).single();
   if (error || !data) return null;
   return data as HaConnection;
 }
@@ -59,64 +71,22 @@ async function fetchHaConnectionOwnedBy(userId: number): Promise<HaConnection | 
 export async function getUserWithHaConnection(
   userId: number
 ): Promise<{ user: UserWithRelations; haConnection: HaConnection }> {
-  let user = await fetchUserWithRelations(userId);
+  const user = await fetchUserWithRelations(userId);
   if (!user) throw new Error('User not found');
 
-  let haConnection: HaConnection | null = null;
-
-  if (user.haConnectionId) {
-    haConnection = await fetchHaConnectionById(user.haConnectionId);
-  }
-
-  if (!haConnection && user.role === 'ADMIN') {
-    haConnection = await fetchHaConnectionOwnedBy(user.id);
-  }
-
-  if (user.role === 'TENANT') {
-    // For tenants, always resolve the canonical HA connection from an admin,
-    // so they stay in sync with the admin's HA settings (base URL, token, etc.).
-    const { data: admins, error } = await supabase
-      .from('User')
-      .select('id, haConnectionId')
-      .eq('role', 'ADMIN')
-      .limit(1);
-    if (error) throw error;
-
-    type AdminRow = {
-      id: number;
-      haConnectionId: number | null;
-    };
-    const admin = admins?.[0] as AdminRow | undefined;
-    const adminOwned = admin ? await fetchHaConnectionOwnedBy(admin.id) : null;
-    const adminHaConnectionId = admin?.haConnectionId ?? adminOwned?.id ?? null;
-
-    if (admin && !admin.haConnectionId && adminHaConnectionId) {
-      await supabase
-        .from('User')
-        .update({ haConnectionId: adminHaConnectionId })
-        .eq('id', admin.id);
-    }
-
-    if (adminHaConnectionId) {
-      await supabase
-        .from('User')
-        .update({ haConnectionId: adminHaConnectionId })
-        .eq('id', user.id);
-
-      const ha = await fetchHaConnectionById(adminHaConnectionId);
-      if (!ha) throw new Error('Dinodia Hub connection not found');
-
-      haConnection = ha;
-      user = (await fetchUserWithRelations(userId))!;
-    } else if (!haConnection) {
-      throw new Error(
-        'Dinodia Hub connection is not configured for this property. The homeowner needs to set it up.'
-      );
-    }
-  }
-
-  if (!user || !haConnection) {
+  const homeId = user.homeId;
+  if (!homeId) {
     throw new Error('Dinodia Hub connection is not configured for this home.');
+  }
+
+  const haConnectionId = await fetchHomeHaConnectionId(homeId);
+  if (!haConnectionId) {
+    throw new Error('Dinodia Hub connection is not configured for this home.');
+  }
+
+  const haConnection = await fetchHaConnectionById(haConnectionId);
+  if (!haConnection) {
+    throw new Error('Dinodia Hub connection not found');
   }
 
   return { user, haConnection };
@@ -144,14 +114,11 @@ export async function fetchDevicesForUser(
   const reachable = await probeHaReachability(haLike, mode === 'home' ? 2000 : 4000);
   if (!reachable) {
     if (mode === 'home') {
-      throw new Error(
-        'We cannot find your Dinodia Hub on the home Wi-Fi. It looks like you are away from home—switch to Dinodia Cloud to control your place.'
-      );
-    } else {
-      throw new Error(
-        'Dinodia Cloud is not ready yet. The homeowner needs to finish setting up remote access for this property.'
-      );
+      throw new Error(HOME_WIFI_PROMPT);
     }
+    throw new Error(
+      'Dinodia Cloud is not ready yet. The homeowner needs to finish setting up remote access for this property.'
+    );
   }
 
   // 1) Fetch devices from HA
@@ -261,7 +228,10 @@ export async function createTenant(params: {
   passwordHash: string; // You will hash server-side if you expose a secure endpoint
   area: string;
 }): Promise<void> {
-  const { haConnection } = await getUserWithHaConnection(params.adminId);
+  const { user: adminUser, haConnection } = await getUserWithHaConnection(params.adminId);
+  if (!adminUser.homeId) {
+    throw new Error('Dinodia home not found for this admin.');
+  }
 
   // In practice, you should not send `passwordHash` from the client; instead call a secure endpoint.
   const { data: tenant, error } = await supabase
@@ -270,6 +240,7 @@ export async function createTenant(params: {
       username: params.username,
       passwordHash: params.passwordHash,
       role: 'TENANT',
+      homeId: adminUser.homeId,
       haConnectionId: haConnection.id,
     })
     .select('id')

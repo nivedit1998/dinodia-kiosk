@@ -30,8 +30,11 @@ import { TopBar } from '../../components/ui/TopBar';
 import { TextField } from '../../components/ui/TextField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
+import { RemoteAccessLocked } from '../../components/RemoteAccessLocked';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
 import { logoutRemote } from '../../api/auth';
+import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
+import { useDeviceStatus } from '../../hooks/useDeviceStatus';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
@@ -53,6 +56,11 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const isWide = width > 900;
   const [menuVisible, setMenuVisible] = useState(false);
   const isCloud = haMode === 'cloud';
+  const remoteAccess = useRemoteAccessStatus(haMode);
+  const { wifiName, batteryLevel } = useDeviceStatus();
+  const isAdmin = session.user?.role === 'ADMIN';
+  const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
+  const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
 
   const eligibleDevices = useMemo(() => getEligibleDevicesForAutomations(devices), [devices]);
   const [alias, setAlias] = useState(initialDraft?.alias ?? initialAlias ?? (isEditing ? 'Edit automation' : 'New automation'));
@@ -222,6 +230,16 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     await clearSession();
   };
 
+  if (isCloud && remoteAccess.status !== 'enabled') {
+    const message =
+      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
+    return (
+      <SafeAreaView style={styles.screen}>
+        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
+      </SafeAreaView>
+    );
+  }
+
   const save = async () => {
     if (!actionDevice || !selectedActionId) {
       Alert.alert('Choose an action device and action to continue.');
@@ -289,9 +307,40 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
       <TopBar
         mode={haMode}
         activeTab="automations"
+        tabs={
+          isAdmin
+            ? [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'homeSetup', label: 'Home Setup' },
+              ]
+            : [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'addDevices', label: 'Add Devices' },
+              ]
+        }
         onPressMenu={() => setMenuVisible(true)}
+        onPressMode={handleToggleMode}
+        wifiName={wifiName}
+        batteryLevel={batteryLevel}
+        onPressWifi={handleOpenWifiSetup}
         onChangeTab={(tab) => {
-          if (tab === 'dashboard') navigation.getParent()?.navigate('DashboardTab');
+          if (tab === 'dashboard') {
+            navigation.getParent()?.navigate('DashboardTab', {
+              screen: dashboardScreen as never,
+            });
+            return;
+          }
+          if (tab === 'homeSetup' && isAdmin) {
+            navigation.getParent()?.navigate('DashboardTab', { screen: 'AdminHomeSetup' as never });
+            return;
+          }
+          if (tab === 'addDevices' && addDevicesScreen) {
+            navigation.getParent()?.navigate('DashboardTab', {
+              screen: addDevicesScreen as never,
+            });
+          }
         }}
       />
       <ScrollView contentContainerStyle={[styles.container, isWide && styles.containerWide]}>
@@ -606,10 +655,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
       </ScrollView>
       <HeaderMenu
         visible={menuVisible}
-        isCloud={isCloud}
         onClose={() => setMenuVisible(false)}
-        onToggleMode={handleToggleMode}
-        onOpenWifi={handleOpenWifiSetup}
         onLogout={handleLogout}
       />
     </SafeAreaView>

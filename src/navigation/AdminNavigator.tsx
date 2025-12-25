@@ -3,6 +3,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AdminDashboardScreen } from '../screens/AdminDashboardScreen';
+import { AdminHomeSetupScreen } from '../screens/AdminHomeSetupScreen';
 import { AdminSettingsScreen } from '../screens/AdminSettingsScreen';
 import { AutomationsListScreen } from '../screens/automations/AutomationsListScreen';
 import { AutomationEditorScreen } from '../screens/automations/AutomationEditorScreen';
@@ -10,6 +11,7 @@ import { AutomationEditorScreen } from '../screens/automations/AutomationEditorS
 export type AdminStackParamList = {
   AdminDashboard: undefined;
   AdminSettings: undefined;
+  AdminHomeSetup: undefined;
 };
 
 export type AdminAutomationsStackParamList = {
@@ -31,6 +33,7 @@ function DashboardStackScreen() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="AdminSettings" component={AdminSettingsScreen} />
+      <Stack.Screen name="AdminHomeSetup" component={AdminHomeSetupScreen} />
     </Stack.Navigator>
   );
 }

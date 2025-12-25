@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  LayoutChangeEvent,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { palette, radii, shadows, spacing } from '../../ui/theme';
 
 type Tab = {
@@ -17,15 +25,17 @@ export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
   const activeIndex = useMemo(() => Math.max(0, tabs.findIndex((t) => t.key === activeKey)), [tabs, activeKey]);
   const [width, setWidth] = useState(0);
   const highlight = useRef(new Animated.Value(activeIndex)).current;
+  const [layoutReady, setLayoutReady] = useState(false);
 
   useEffect(() => {
-    Animated.spring(highlight, {
+    if (!layoutReady) return;
+    Animated.timing(highlight, {
       toValue: activeIndex,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-      tension: 150,
-      friction: 18,
     }).start();
-  }, [activeIndex, highlight]);
+  }, [activeIndex, highlight, layoutReady]);
 
   const widthPercent = 1 / Math.max(1, tabs.length);
   const translateX = highlight.interpolate({
@@ -34,7 +44,12 @@ export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
   });
 
   const onLayout = (e: LayoutChangeEvent) => {
-    setWidth(e.nativeEvent.layout.width);
+    const nextWidth = e.nativeEvent.layout.width;
+    setWidth(nextWidth);
+    if (!layoutReady && nextWidth > 0) {
+      highlight.setValue(activeIndex);
+      setLayoutReady(true);
+    }
   };
 
   return (
@@ -47,6 +62,7 @@ export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
             transform: [{ translateX }],
           },
         ]}
+        pointerEvents="none"
       />
       {tabs.map((tab, idx) => {
         const selected = tab.key === activeKey;
@@ -77,7 +93,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
     ...shadows.soft,
-    minWidth: 200,
+    minWidth: 340,
   },
   highlight: {
     position: 'absolute',

@@ -19,8 +19,11 @@ import { palette, maxContentWidth, radii, shadows, spacing, typography } from '.
 import { TopBar } from '../../components/ui/TopBar';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
+import { RemoteAccessLocked } from '../../components/RemoteAccessLocked';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
 import { logoutRemote } from '../../api/auth';
+import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
+import { useDeviceStatus } from '../../hooks/useDeviceStatus';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 
@@ -35,7 +38,12 @@ export function AutomationsListScreen({}: Props) {
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [menuVisible, setMenuVisible] = useState(false);
   const userId = session.user?.id;
+  const isAdmin = session.user?.role === 'ADMIN';
+  const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
+  const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
   const isCloud = haMode === 'cloud';
+  const remoteAccess = useRemoteAccessStatus(haMode);
+  const { wifiName, batteryLevel } = useDeviceStatus();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,11 +56,12 @@ export function AutomationsListScreen({}: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [haMode, session.haConnection]);
 
   useEffect(() => {
+    if (isCloud && remoteAccess.status !== 'enabled') return;
     void load();
-  }, [load]);
+  }, [isCloud, load, remoteAccess.status]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -65,7 +74,7 @@ export function AutomationsListScreen({}: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [haMode, session.haConnection]);
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -85,7 +94,7 @@ export function AutomationsListScreen({}: Props) {
         },
       ]);
     },
-    [refresh]
+    [haMode, refresh, session.haConnection]
   );
 
   const handleToggleMode = useCallback(() => {
@@ -109,14 +118,55 @@ export function AutomationsListScreen({}: Props) {
     await clearSession();
   }, [clearSession]);
 
+  if (isCloud && remoteAccess.status !== 'enabled') {
+    const message =
+      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
+    return (
+      <SafeAreaView style={styles.container}>
+        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <TopBar
         mode={haMode}
         activeTab="automations"
+        tabs={
+          isAdmin
+            ? [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'homeSetup', label: 'Home Setup' },
+              ]
+            : [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'addDevices', label: 'Add Devices' },
+              ]
+        }
         onPressMenu={() => setMenuVisible(true)}
+        onPressMode={handleToggleMode}
+        wifiName={wifiName}
+        batteryLevel={batteryLevel}
+        onPressWifi={handleOpenWifiSetup}
         onChangeTab={(tab) => {
-          if (tab === 'dashboard') navigation.getParent()?.navigate('DashboardTab');
+          if (tab === 'dashboard') {
+            navigation.getParent()?.navigate('DashboardTab', {
+              screen: dashboardScreen as never,
+            });
+            return;
+          }
+          if (tab === 'homeSetup' && isAdmin) {
+            navigation.getParent()?.navigate('DashboardTab', { screen: 'AdminHomeSetup' as never });
+            return;
+          }
+          if (tab === 'addDevices' && addDevicesScreen) {
+            navigation.getParent()?.navigate('DashboardTab', {
+              screen: addDevicesScreen as never,
+            });
+          }
         }}
       />
 
@@ -189,10 +239,7 @@ export function AutomationsListScreen({}: Props) {
       </View>
       <HeaderMenu
         visible={menuVisible}
-        isCloud={isCloud}
         onClose={() => setMenuVisible(false)}
-        onToggleMode={handleToggleMode}
-        onOpenWifi={handleOpenWifiSetup}
         onLogout={handleLogout}
       />
     </SafeAreaView>

@@ -4,12 +4,14 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { TenantDashboardScreen } from '../screens/TenantDashboardScreen';
 import { TenantSettingsScreen } from '../screens/TenantSettingsScreen';
+import { TenantAddDevicesScreen } from '../screens/TenantAddDevicesScreen';
 import { AutomationsListScreen } from '../screens/automations/AutomationsListScreen';
 import { AutomationEditorScreen } from '../screens/automations/AutomationEditorScreen';
 
 export type TenantStackParamList = {
   TenantDashboard: undefined;
   TenantSettings: undefined;
+  TenantAddDevices: undefined;
 };
 
 export type TenantAutomationsStackParamList = {
@@ -31,6 +33,7 @@ function DashboardStackScreen() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="TenantDashboard" component={TenantDashboardScreen} />
       <Stack.Screen name="TenantSettings" component={TenantSettingsScreen} />
+      <Stack.Screen name="TenantAddDevices" component={TenantAddDevicesScreen} />
     </Stack.Navigator>
   );
 }

@@ -1,7 +1,12 @@
 // src/store/sessionStore.ts
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
+import CookieManager from '@react-native-cookies/cookies';
 import type { AuthUser } from '../api/auth';
 import type { HaConnection } from '../models/haConnection';
+import { logoutRemote } from '../api/auth';
+import { supabase } from '../api/supabaseClient';
+import { clearTokens } from '../spotify/spotifyApi';
 import { loadJson, saveJson, removeKey } from '../utils/storage';
 import { clearAllDeviceCacheForUser } from './deviceStore';
 
@@ -17,6 +22,7 @@ type SessionContextValue = {
   loading: boolean;
   setSession: (s: Session) => Promise<void>;
   clearSession: () => Promise<void>;
+  resetApp: () => Promise<void>;
   haMode: HaMode;
   setHaMode: (mode: HaMode) => void;
 };
@@ -24,6 +30,7 @@ type SessionContextValue = {
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
 
 const SESSION_KEY = 'dinodia_session';
+const SPOTIFY_EPHEMERAL_KEY = 'spotify_auth_ephemeral_v1';
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSessionState] = useState<Session>({
@@ -32,6 +39,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   });
   const [loading, setLoading] = useState(true);
   const [haMode, setHaModeState] = useState<HaMode>('home');
+  const resettingRef = useRef(false);
 
   useEffect(() => {
     void (async () => {
@@ -44,6 +52,71 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     })();
   }, []);
+
+  const resetToCleanSlate = async (userId?: number) => {
+    if (resettingRef.current) return;
+    resettingRef.current = true;
+    try {
+      await logoutRemote().catch(() => undefined);
+      if (userId) {
+        await clearAllDeviceCacheForUser(userId).catch(() => undefined);
+        await removeKey(`tenant_selected_area_${userId}`).catch(() => undefined);
+      }
+      await clearTokens().catch(() => undefined);
+      await removeKey(SPOTIFY_EPHEMERAL_KEY).catch(() => undefined);
+      await CookieManager.clearAll(true).catch(() => undefined);
+      await removeKey(SESSION_KEY).catch(() => undefined);
+    } finally {
+      setSessionState({ user: null, haConnection: null });
+      setHaModeState('home');
+      resettingRef.current = false;
+    }
+  };
+
+  const verifyUserStillExists = async () => {
+    const userId = session.user?.id;
+    if (!userId || loading) return;
+    if (resettingRef.current) return;
+
+    const { data, error } = await supabase
+      .from('User')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error) {
+      return;
+    }
+
+    if (!data) {
+      await resetToCleanSlate(userId);
+    }
+  };
+
+  useEffect(() => {
+    void verifyUserStillExists();
+  }, [loading, session.user?.id]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void verifyUserStillExists();
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [loading, session.user?.id]);
+
+  useEffect(() => {
+    if (loading || !session.user?.id) return;
+    const id = setInterval(() => {
+      void verifyUserStillExists();
+    }, 60000);
+    return () => {
+      clearInterval(id);
+    };
+  }, [loading, session.user?.id]);
 
   const setSession = async (s: Session) => {
     const previousUserId = session.user?.id;
@@ -67,7 +140,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionContext.Provider
-      value={{ session, loading, setSession, clearSession, haMode, setHaMode: setHaModeState }}
+      value={{
+        session,
+        loading,
+        setSession,
+        clearSession,
+        resetApp: async () => resetToCleanSlate(session.user?.id),
+        haMode,
+        setHaMode: setHaModeState,
+      }}
     >
       {children}
     </SessionContext.Provider>

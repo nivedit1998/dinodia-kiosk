@@ -21,7 +21,7 @@ import { DeviceCard } from '../components/DeviceCard';
 import type { DeviceCardSize } from '../components/DeviceCard';
 import { DeviceDetail } from '../components/DeviceDetail';
 import { useDevices, clearDeviceCacheForUserAndMode } from '../store/deviceStore';
-import type { HaMode } from '../api/dinodia';
+import { HOME_WIFI_PROMPT, type HaMode } from '../api/dinodia';
 import {
   buildDeviceSections,
   buildSectionLayoutRows,
@@ -30,11 +30,14 @@ import {
   LayoutRow,
 } from '../utils/deviceSections';
 import { HeaderMenu } from '../components/HeaderMenu';
+import { RemoteAccessLocked } from '../components/RemoteAccessLocked';
 import { SpotifyCard } from '../components/SpotifyCard';
 import { RingDoorbellCard } from '../components/RingDoorbellCard';
 import { loadJson, saveJson } from '../utils/storage';
 import type { Role } from '../models/roles';
 import { useSession } from '../store/sessionStore';
+import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
+import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { TopBar } from '../components/ui/TopBar';
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
 
@@ -67,6 +70,8 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   const [areaMenuVisible, setAreaMenuVisible] = useState(false);
   const [areaPrefLoaded, setAreaPrefLoaded] = useState(!persistAreaSelection);
   const isCloud = haMode === 'cloud';
+  const remoteAccess = useRemoteAccessStatus(haMode);
+  const { wifiName, batteryLevel } = useDeviceStatus();
   const areaStorageKey = useMemo(
     () => (persistAreaSelection ? `tenant_selected_area_${userId}` : null),
     [persistAreaSelection, userId]
@@ -257,9 +262,19 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   );
 
   const isColdStart = !lastUpdated && devices.length === 0 && !error;
-  const showErrorEmpty = !!error && devices.length === 0;
+  const showHomeWifiPrompt = haMode === 'home' && error === HOME_WIFI_PROMPT;
+  const showErrorEmpty = !!error && devices.length === 0 && !showHomeWifiPrompt;
   const modeLabel = isCloud ? 'Cloud Mode' : 'Home Mode';
   const headerAreaLabel = selectedArea === ALL_AREAS ? ALL_AREAS_LABEL : selectedArea;
+  if (isCloud && remoteAccess.status !== 'enabled') {
+    const message =
+      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
+    return (
+      <SafeAreaView style={styles.screen}>
+        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -267,16 +282,43 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
         areaLabel={headerAreaLabel}
         mode={haMode}
         activeTab="dashboard"
+        tabs={
+          isAdmin
+            ? [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'homeSetup', label: 'Home Setup' },
+              ]
+            : [
+                { key: 'dashboard', label: 'Dashboard' },
+                { key: 'automations', label: 'Automations' },
+                { key: 'addDevices', label: 'Add Devices' },
+              ]
+        }
         onPressArea={() => setAreaMenuVisible(true)}
         onPressMenu={() => setMenuVisible(true)}
+        onPressMode={handleToggleMode}
+        wifiName={wifiName}
+        batteryLevel={batteryLevel}
+        onPressWifi={handleOpenWifiSetup}
         onChangeTab={(tab) => {
           if (tab === 'automations') {
-            navigation.getParent()?.navigate('AutomationsTab');
+            navigation.getParent()?.navigate('AutomationsTab', {
+              screen: 'AutomationsList' as never,
+            });
+            return;
+          }
+          if (tab === 'homeSetup' && isAdmin) {
+            navigation.navigate('AdminHomeSetup' as never);
+            return;
+          }
+          if (tab === 'addDevices' && !isAdmin) {
+            navigation.navigate('TenantAddDevices' as never);
           }
         }}
       />
 
-      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {error && !showHomeWifiPrompt ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
       <View style={styles.content}>
         <FlatList
@@ -289,16 +331,20 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>
                 {isColdStart
-                  ? 'Loading devices…'
+                  ? 'Loading devices...'
+                  : showHomeWifiPrompt
+                  ? HOME_WIFI_PROMPT
                   : showErrorEmpty
                   ? 'Unable to reach devices.'
                   : 'No devices available.'}
               </Text>
-              <Text style={styles.emptySub}>
-                {showErrorEmpty
-                  ? 'Check your connection or switch modes.'
-                  : 'Add devices to this area to get started.'}
-              </Text>
+              {!showHomeWifiPrompt ? (
+                <Text style={styles.emptySub}>
+                  {showErrorEmpty
+                    ? 'Check your connection or switch modes.'
+                    : 'Add devices to this area to get started.'}
+                </Text>
+              ) : null}
             </View>
           }
           refreshing={refreshing}
@@ -379,10 +425,7 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
       />
       <HeaderMenu
         visible={menuVisible}
-        isCloud={isCloud}
         onClose={() => setMenuVisible(false)}
-        onToggleMode={handleToggleMode}
-        onOpenWifi={handleOpenWifiSetup}
         onLogout={handleLogout}
       />
     </SafeAreaView>

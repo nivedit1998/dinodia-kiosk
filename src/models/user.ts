@@ -6,5 +6,6 @@ export type User = {
   username: string;
   passwordHash?: string; // only ever used server-side; avoid fetching on client
   role: Role;
+  homeId?: number;
   haConnectionId?: number | null;
 };
