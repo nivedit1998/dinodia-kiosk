@@ -1,8 +1,8 @@
-import { ENV } from '../config/env';
 import type { AutomationDraft, AutomationAction, AutomationTrigger } from '../automations/automationModel';
 import { compileAutomationDraftToHaConfig } from '../automations/haCompiler';
 import type { HaMode } from './dinodia';
 import type { HaConnection } from '../models/haConnection';
+import { platformFetch } from './platformFetch';
 
 export type AutomationSummary = {
   id: string;
@@ -16,45 +16,25 @@ export type AutomationSummary = {
   draft?: AutomationDraft | null;
 };
 
-function getPlatformApiBase(): string {
-  const raw = (ENV.DINODIA_PLATFORM_API || '').trim();
-  if (!raw) throw new Error('Dinodia Platform API is not configured. Set DINODIA_PLATFORM_API.');
-  return raw.replace(/\/+$/, '');
-}
-
-async function handleResponse(res: Response) {
-  if (res.ok) {
-    try {
-      const json = await res.json();
-      if (json && typeof json === 'object') {
-        const ok = (json as any).ok;
-        const err = (json as any).error;
-        if (ok === false || (typeof err === 'string' && err.trim().length > 0)) {
-          throw new Error(typeof err === 'string' && err.trim().length > 0 ? err : 'Request failed');
-        }
-      }
-      return json;
-    } catch {
-      return null;
-    }
-  }
-  const text = await res.text().catch(() => '');
-  throw new Error(text || `Request failed (${res.status})`);
-}
-
 type PlatformOpts = { haConnection?: HaConnection | null; mode?: HaMode };
+
+function throwIfPlatformError(payload: any) {
+  if (!payload || typeof payload !== 'object') return;
+  const ok = (payload as any).ok;
+  const err = (payload as any).error;
+  if (ok === false || (typeof err === 'string' && err.trim().length > 0)) {
+    throw new Error(typeof err === 'string' && err.trim().length > 0 ? err : 'Request failed');
+  }
+}
 
 export async function listAutomations(opts: PlatformOpts = {}): Promise<AutomationSummary[]> {
   try {
-    const base = getPlatformApiBase();
-    const res = await fetch(`${base}/api/automations`, {
+    const { data } = await platformFetch<any>('/api/automations', {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
     });
-    const data = await handleResponse(res);
-    if (!Array.isArray(data)) return [];
-    const mapped = data.map((item: any) => {
+    throwIfPlatformError(data);
+    const response = Array.isArray(data) ? data : [];
+    const mapped = response.map((item: any) => {
       const draft = isAutomationDraft(item.draft) ? (item.draft as AutomationDraft) : undefined;
       const draftSummaries = draft ? summarizeDraft(draft) : {};
       return {
@@ -81,14 +61,11 @@ export async function listAutomations(opts: PlatformOpts = {}): Promise<Automati
 export async function createAutomation(draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
   const payload = { draft, haConfig: compileAutomationDraftToHaConfig(draft) };
   try {
-    const base = getPlatformApiBase();
-    const res = await fetch(`${base}/api/automations`, {
+    const { data } = await platformFetch('/api/automations', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify(payload),
     });
-    await handleResponse(res);
+    throwIfPlatformError(data);
     return;
   } catch (err) {
     try {
@@ -104,14 +81,11 @@ export async function createAutomation(draft: AutomationDraft, opts: PlatformOpt
 export async function updateAutomation(id: string, draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
   const payload = { draft: { ...draft, id }, haConfig: compileAutomationDraftToHaConfig({ ...draft, id }) };
   try {
-    const base = getPlatformApiBase();
-    const res = await fetch(`${base}/api/automations/${encodeURIComponent(id)}`, {
+    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify(payload),
     });
-    await handleResponse(res);
+    throwIfPlatformError(data);
     return;
   } catch (err) {
     try {
@@ -126,13 +100,10 @@ export async function updateAutomation(id: string, draft: AutomationDraft, opts:
 
 export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Promise<void> {
   try {
-    const base = getPlatformApiBase();
-    const res = await fetch(`${base}/api/automations/${encodeURIComponent(id)}`, {
+    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
     });
-    await handleResponse(res);
+    throwIfPlatformError(data);
     return;
   } catch (err) {
     try {
@@ -148,13 +119,10 @@ export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Pro
 export async function setAutomationEnabled(id: string, enabled: boolean, opts: PlatformOpts = {}): Promise<void> {
   const action = enabled ? 'enable' : 'disable';
   try {
-    const base = getPlatformApiBase();
-    const res = await fetch(`${base}/api/automations/${encodeURIComponent(id)}/${action}`, {
+    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
     });
-    await handleResponse(res);
+    throwIfPlatformError(data);
     return;
   } catch (err) {
     try {

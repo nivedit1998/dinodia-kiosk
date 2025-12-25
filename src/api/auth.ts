@@ -1,6 +1,7 @@
 // src/api/auth.ts
-import { ENV } from '../config/env';
 import type { Role } from '../models/roles';
+import { clearPlatformCookie, platformFetch } from './platformFetch';
+import { clearPlatformToken, setPlatformToken } from './platformToken';
 
 export type AuthUser = {
   id: number;
@@ -9,7 +10,7 @@ export type AuthUser = {
 };
 
 export type LoginStep =
-  | { status: 'OK'; role: Role }
+  | { status: 'OK'; role: Role; token?: string }
   | { status: 'NEEDS_EMAIL' }
   | { status: 'CHALLENGE'; challengeId: string };
 
@@ -18,6 +19,7 @@ export type ChallengeStatus = 'PENDING' | 'APPROVED' | 'CONSUMED' | 'EXPIRED' | 
 type LoginResponse = {
   ok?: boolean;
   role?: Role;
+  token?: string;
   requiresEmailVerification?: boolean;
   needsEmailInput?: boolean;
   challengeId?: string;
@@ -35,44 +37,11 @@ type ChallengeCompleteResponse = {
   error?: string;
 };
 
-const LOGIN_PATH = '/api/auth/login';
+const LOGIN_PATH = '/api/auth/mobile-login';
 const LOGOUT_PATH = '/api/auth/logout';
 const CHALLENGE_PATH = '/api/auth/challenges';
 const ADMIN_CHANGE_PASSWORD_PATH = '/api/admin/profile/change-password';
 const TENANT_CHANGE_PASSWORD_PATH = '/api/tenant/profile/change-password';
-
-function getPlatformBase(): string {
-  const raw = (ENV.DINODIA_PLATFORM_API || '').trim();
-  if (!raw) {
-    throw new Error('Login is not available right now. Please try again in a moment.');
-  }
-  return raw.replace(/\/+$/, '');
-}
-
-async function platformFetch<T>(path: string, options: RequestInit): Promise<T> {
-  const url = `${getPlatformBase()}${path}`;
-  if (__DEV__) {
-    // eslint-disable-next-line no-console
-    console.log('[auth] fetch', url, options);
-  }
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-    credentials: 'include',
-  });
-  const data = (await res.json().catch(() => ({}))) as T;
-  if (!res.ok) {
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.log('[auth] fetch failed', res.status, data);
-    }
-    throw new Error((data as any).error || `HTTP ${res.status}`);
-  }
-  return data;
-}
 
 export async function loginWithCredentials(params: {
   username: string;
@@ -97,7 +66,7 @@ export async function loginWithCredentials(params: {
   }
 
   try {
-    const data = await platformFetch<LoginResponse>(LOGIN_PATH, {
+    const { data } = await platformFetch<LoginResponse>(LOGIN_PATH, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -113,7 +82,12 @@ export async function loginWithCredentials(params: {
     }
 
     if (data.ok && data.role) {
-      return { status: 'OK', role: data.role };
+      if (typeof data.token === 'string' && data.token.trim().length > 0) {
+        await setPlatformToken(data.token);
+      } else {
+        throw new Error('Login succeeded but no token was returned. Please try again.');
+      }
+      return { status: 'OK', role: data.role, token: data.token };
     }
 
     throw new Error(
@@ -130,23 +104,25 @@ export async function loginWithCredentials(params: {
 }
 
 export async function fetchChallengeStatus(challengeId: string): Promise<ChallengeStatus> {
-  const url = `${getPlatformBase()}${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-  });
-  if (res.status === 404) {
-    return 'NOT_FOUND';
+  try {
+    const { data } = await platformFetch<ChallengeStatusResponse>(
+      `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}`,
+      {
+        method: 'GET',
+      }
+    );
+    if (data.status) {
+      return data.status;
+    }
+    throw new Error('Invalid verification status response.');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '';
+    if (message.toLowerCase().includes('not found') || message.includes('404')) {
+      return 'NOT_FOUND';
+    }
+    if (err instanceof Error) throw err;
+    throw new Error('Invalid verification status response.');
   }
-  const data = (await res.json().catch(() => ({}))) as ChallengeStatusResponse;
-  if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-  if (data.status) {
-    return data.status;
-  }
-  throw new Error('Invalid verification status response.');
 }
 
 export async function completeChallenge(
@@ -154,7 +130,7 @@ export async function completeChallenge(
   deviceId: string,
   deviceLabel: string
 ): Promise<{ role: Role }> {
-  const data = await platformFetch<ChallengeCompleteResponse>(
+  const { data } = await platformFetch<ChallengeCompleteResponse>(
     `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}/complete`,
     {
       method: 'POST',
@@ -205,4 +181,8 @@ export async function logoutRemote(): Promise<void> {
   } catch {
     // ignore
   }
+  await Promise.all([
+    clearPlatformToken().catch(() => undefined),
+    clearPlatformCookie().catch(() => undefined),
+  ]);
 }

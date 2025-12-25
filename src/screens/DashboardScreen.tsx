@@ -17,9 +17,11 @@ import type { UIDevice } from '../models/device';
 import { normalizeLabel } from '../utils/deviceLabels';
 import { isDetailDevice, isSensorDevice } from '../utils/deviceKinds';
 import { logoutRemote } from '../api/auth';
+import { checkRemoteAccessEnabled } from '../api/remoteAccess';
 import { DeviceCard } from '../components/DeviceCard';
 import type { DeviceCardSize } from '../components/DeviceCard';
 import { DeviceDetail } from '../components/DeviceDetail';
+import { CloudModePrompt } from '../components/CloudModePrompt';
 import { useDevices, clearDeviceCacheForUserAndMode } from '../store/deviceStore';
 import { HOME_WIFI_PROMPT, type HaMode } from '../api/dinodia';
 import {
@@ -30,7 +32,6 @@ import {
   LayoutRow,
 } from '../utils/deviceSections';
 import { HeaderMenu } from '../components/HeaderMenu';
-import { RemoteAccessLocked } from '../components/RemoteAccessLocked';
 import { SpotifyCard } from '../components/SpotifyCard';
 import { RingDoorbellCard } from '../components/RingDoorbellCard';
 import { loadJson, saveJson } from '../utils/storage';
@@ -69,6 +70,9 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   const [selectedArea, setSelectedArea] = useState<string | typeof ALL_AREAS>(ALL_AREAS);
   const [areaMenuVisible, setAreaMenuVisible] = useState(false);
   const [areaPrefLoaded, setAreaPrefLoaded] = useState(!persistAreaSelection);
+  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const isCloud = haMode === 'cloud';
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
@@ -189,14 +193,53 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
     [handleBackgroundRefresh]
   );
 
+  const switchMode = useCallback(
+    async (nextMode: HaMode) => {
+      await clearDeviceCacheForUserAndMode(userId, nextMode).catch(() => undefined);
+      setHaMode(nextMode);
+    },
+    [setHaMode, userId]
+  );
+
   const handleToggleMode = useCallback(() => {
-    const nextMode: HaMode = isCloud ? 'home' : 'cloud';
-    void clearDeviceCacheForUserAndMode(userId, nextMode)
-      .catch(() => undefined)
-      .then(() => {
-        setHaMode(nextMode);
-      });
-  }, [isCloud, setHaMode, userId]);
+    if (isCloud) {
+      void switchMode('home');
+      return;
+    }
+    setCloudCheckResult('idle');
+    setCloudPromptVisible(true);
+  }, [isCloud, switchMode]);
+
+  const handleConfirmCloud = useCallback(async () => {
+    if (cloudChecking) return;
+    setCloudChecking(true);
+    setCloudCheckResult('checking');
+    let ok = false;
+    try {
+      ok = await checkRemoteAccessEnabled();
+    } catch {
+      // ignore, fallback to cloud locked screen
+    }
+    setCloudChecking(false);
+    if (ok) {
+      setCloudCheckResult('success');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        void switchMode('cloud');
+      }, 700);
+    } else {
+      setCloudCheckResult('error');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setCloudCheckResult('idle');
+      }, 900);
+    }
+  }, [cloudChecking, switchMode]);
+
+  const handleCancelCloud = useCallback(() => {
+    if (cloudChecking) return;
+    setCloudPromptVisible(false);
+  }, [cloudChecking]);
 
   const handleOpenWifiSetup = useCallback(() => {
     if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {
@@ -266,15 +309,11 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   const showErrorEmpty = !!error && devices.length === 0 && !showHomeWifiPrompt;
   const modeLabel = isCloud ? 'Cloud Mode' : 'Home Mode';
   const headerAreaLabel = selectedArea === ALL_AREAS ? ALL_AREAS_LABEL : selectedArea;
-  if (isCloud && remoteAccess.status !== 'enabled') {
-    const message =
-      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
-    return (
-      <SafeAreaView style={styles.screen}>
-        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
-      </SafeAreaView>
-    );
-  }
+  useEffect(() => {
+    if (isCloud && remoteAccess.status === 'locked') {
+      void switchMode('home');
+    }
+  }, [isCloud, remoteAccess.status, switchMode]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -427,10 +466,25 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onRemoteAccess={
+          isAdmin
+            ? () => {
+                setMenuVisible(false);
+                navigation.navigate('RemoteAccessSetup' as never);
+              }
+            : undefined
+        }
       />
-    </SafeAreaView>
-  );
-}
+      <CloudModePrompt
+        visible={cloudPromptVisible}
+        checking={cloudChecking}
+        result={cloudCheckResult}
+        onCancel={handleCancelCloud}
+        onConfirm={handleConfirmCloud}
+      />
+      </SafeAreaView>
+    );
+  }
 
 type DashboardScreenProps = {
   role: Role;

@@ -6,6 +6,8 @@ import type { AccessRule } from '../models/accessRule';
 import type { UIDevice, DeviceOverride } from '../models/device';
 import { getDevicesWithMetadata, EnrichedDevice, HaConnectionLike, probeHaReachability } from './ha';
 import { classifyDeviceByLabel } from '../utils/labelCatalog';
+import { platformFetch } from './platformFetch';
+import type { Role } from '../models/roles';
 
 export type HaMode = 'home' | 'cloud';
 export const HOME_WIFI_PROMPT =
@@ -270,30 +272,70 @@ export async function updateHaSettings(params: {
   const { haConnection } = await getUserWithHaConnection(params.adminId);
   const normalizedBaseUrl = normalizeHaBaseUrl(params.haBaseUrl);
 
-  const updateData: Partial<HaConnection> = {
+  type UpdateResponse = {
+    ok?: boolean;
+    haUsername?: string;
+    haBaseUrl?: string;
+    haCloudUrl?: string | null;
+    hasHaPassword?: boolean;
+    hasLongLivedToken?: boolean;
+    role?: Role;
+    error?: string;
+  };
+
+  const payload: Record<string, string> = {
     haUsername: params.haUsername.trim(),
-    baseUrl: normalizedBaseUrl,
+    haBaseUrl: normalizedBaseUrl,
   };
   if (params.haCloudUrl !== undefined) {
-    const trimmedCloud = params.haCloudUrl.trim();
-    (updateData as any).cloudUrl = trimmedCloud.length === 0 ? null : trimmedCloud.replace(/\/+$/, '');
+    payload.haCloudUrl = params.haCloudUrl.trim();
   }
   if (params.haPassword && params.haPassword.length > 0) {
-    (updateData as any).haPassword = params.haPassword;
+    payload.haPassword = params.haPassword;
   }
   if (params.haLongLivedToken && params.haLongLivedToken.length > 0) {
-    (updateData as any).longLivedToken = params.haLongLivedToken;
+    payload.haLongLivedToken = params.haLongLivedToken;
   }
 
-  const { data, error } = await supabase
-    .from('HaConnection')
-    .update(updateData)
-    .eq('id', haConnection.id)
-    .select('*')
-    .single();
-  if (error) throw error;
+  try {
+    const { data } = await platformFetch<UpdateResponse>('/api/admin/profile/ha-settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
 
-  return data as HaConnection;
+    if (data && data.ok === false) {
+      throw new Error(
+        (data.error && typeof data.error === 'string' && data.error.trim().length > 0
+          ? data.error
+          : null) ||
+          'We could not save these Dinodia Hub settings. Please try again.'
+      );
+    }
+
+    const merged: HaConnection = {
+      ...haConnection,
+      haUsername: data.haUsername ?? haConnection.haUsername,
+      baseUrl: data.haBaseUrl ?? haConnection.baseUrl,
+      cloudUrl:
+        typeof data.haCloudUrl === 'string' || data.haCloudUrl === null
+          ? data.haCloudUrl
+          : haConnection.cloudUrl,
+      longLivedToken:
+        params.haLongLivedToken && params.haLongLivedToken.length > 0
+          ? params.haLongLivedToken
+          : haConnection.longLivedToken,
+      haPassword: haConnection.haPassword,
+      ownerId: haConnection.ownerId,
+      id: haConnection.id,
+    };
+
+    return merged;
+  } catch (err) {
+    if (err instanceof Error) {
+      throw err;
+    }
+    throw new Error('We could not reach the server. Please try again.');
+  }
 }
 
 function normalizeHaBaseUrl(value: string): string {

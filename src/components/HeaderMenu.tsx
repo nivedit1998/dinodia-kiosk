@@ -6,9 +6,10 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onLogout: () => void;
+  onRemoteAccess?: () => void;
 };
 
-export function HeaderMenu({ visible, onClose, onLogout }: Props) {
+export function HeaderMenu({ visible, onClose, onLogout, onRemoteAccess }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -16,6 +17,18 @@ export function HeaderMenu({ visible, onClose, onLogout }: Props) {
       </Pressable>
       <View style={styles.menuContainer}>
         <View style={styles.menuCard}>
+          {onRemoteAccess ? (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                onRemoteAccess();
+                onClose();
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.menuItemText}>Enable Remote Access</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => {

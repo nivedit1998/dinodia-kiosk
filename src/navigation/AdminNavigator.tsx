@@ -7,11 +7,13 @@ import { AdminHomeSetupScreen } from '../screens/AdminHomeSetupScreen';
 import { AdminSettingsScreen } from '../screens/AdminSettingsScreen';
 import { AutomationsListScreen } from '../screens/automations/AutomationsListScreen';
 import { AutomationEditorScreen } from '../screens/automations/AutomationEditorScreen';
+import { RemoteAccessSetupScreen } from '../screens/RemoteAccessSetupScreen';
 
 export type AdminStackParamList = {
   AdminDashboard: undefined;
   AdminSettings: undefined;
   AdminHomeSetup: undefined;
+  RemoteAccessSetup: undefined;
 };
 
 export type AdminAutomationsStackParamList = {
@@ -34,6 +36,7 @@ function DashboardStackScreen() {
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="AdminSettings" component={AdminSettingsScreen} />
       <Stack.Screen name="AdminHomeSetup" component={AdminHomeSetupScreen} />
+      <Stack.Screen name="RemoteAccessSetup" component={RemoteAccessSetupScreen} />
     </Stack.Navigator>
   );
 }

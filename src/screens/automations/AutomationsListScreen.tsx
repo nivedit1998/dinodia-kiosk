@@ -19,11 +19,12 @@ import { palette, maxContentWidth, radii, shadows, spacing, typography } from '.
 import { TopBar } from '../../components/ui/TopBar';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
-import { RemoteAccessLocked } from '../../components/RemoteAccessLocked';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
 import { logoutRemote } from '../../api/auth';
 import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
+import { checkRemoteAccessEnabled } from '../../api/remoteAccess';
+import { CloudModePrompt } from '../../components/CloudModePrompt';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 
@@ -37,6 +38,9 @@ export function AutomationsListScreen({}: Props) {
   const [error, setError] = useState<string | null>(null);
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const userId = session.user?.id;
   const isAdmin = session.user?.role === 'ADMIN';
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
@@ -97,13 +101,55 @@ export function AutomationsListScreen({}: Props) {
     [haMode, refresh, session.haConnection]
   );
 
+  const switchMode = useCallback(
+    async (next: 'home' | 'cloud') => {
+      if (userId) {
+        await clearDeviceCacheForUserAndMode(userId, next).catch(() => undefined);
+      }
+      setHaMode(next);
+    },
+    [setHaMode, userId]
+  );
+
   const handleToggleMode = useCallback(() => {
-    const next = isCloud ? 'home' : 'cloud';
-    if (userId) {
-      void clearDeviceCacheForUserAndMode(userId, next).catch(() => undefined);
+    if (isCloud) {
+      void switchMode('home');
+      return;
     }
-    setHaMode(next);
-  }, [isCloud, setHaMode, userId]);
+    setCloudCheckResult('idle');
+    setCloudPromptVisible(true);
+  }, [isCloud, switchMode]);
+
+  const handleConfirmCloud = useCallback(async () => {
+    if (cloudChecking) return;
+    setCloudChecking(true);
+    setCloudCheckResult('checking');
+    let ok = false;
+    try {
+      ok = await checkRemoteAccessEnabled();
+    } catch {
+      // ignore, fallback to cloud locked screen
+    }
+    setCloudChecking(false);
+    if (ok) {
+      setCloudCheckResult('success');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        void switchMode('cloud');
+      }, 700);
+    } else {
+      setCloudCheckResult('error');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setCloudCheckResult('idle');
+      }, 900);
+    }
+  }, [cloudChecking, switchMode]);
+
+  const handleCancelCloud = useCallback(() => {
+    if (cloudChecking) return;
+    setCloudPromptVisible(false);
+  }, [cloudChecking]);
 
   const handleOpenWifiSetup = useCallback(() => {
     if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {
@@ -118,15 +164,11 @@ export function AutomationsListScreen({}: Props) {
     await clearSession();
   }, [clearSession]);
 
-  if (isCloud && remoteAccess.status !== 'enabled') {
-    const message =
-      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
-    return (
-      <SafeAreaView style={styles.container}>
-        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
-      </SafeAreaView>
-    );
-  }
+  useEffect(() => {
+    if (isCloud && remoteAccess.status === 'locked') {
+      void switchMode('home');
+    }
+  }, [isCloud, remoteAccess.status, switchMode]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -241,6 +283,21 @@ export function AutomationsListScreen({}: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onRemoteAccess={
+          isAdmin
+            ? () => {
+                setMenuVisible(false);
+                navigation.navigate('RemoteAccessSetup' as never);
+              }
+            : undefined
+        }
+      />
+      <CloudModePrompt
+        visible={cloudPromptVisible}
+        checking={cloudChecking}
+        result={cloudCheckResult}
+        onCancel={handleCancelCloud}
+        onConfirm={handleConfirmCloud}
       />
     </SafeAreaView>
   );

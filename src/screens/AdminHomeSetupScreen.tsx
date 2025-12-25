@@ -1,5 +1,5 @@
 // src/screens/AdminHomeSetupScreen.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   NativeModules,
@@ -14,12 +14,13 @@ import { useNavigation } from '@react-navigation/native';
 import { createTenant, deregisterProperty } from '../api/admin';
 import { useDevices } from '../store/deviceStore';
 import { useSession } from '../store/sessionStore';
-import { RemoteAccessLocked } from '../components/RemoteAccessLocked';
+import { CloudModePrompt } from '../components/CloudModePrompt';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { HeaderMenu } from '../components/HeaderMenu';
 import { TopBar } from '../components/ui/TopBar';
-import { palette, radii, shadows, spacing, typography } from '../ui/theme';
+import { checkRemoteAccessEnabled } from '../api/remoteAccess';
+import { maxContentWidth, palette, radii, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
@@ -44,6 +45,9 @@ export function AdminHomeSetupScreen() {
   const [tenantAreas, setTenantAreas] = useState<string[]>([]);
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantMsg, setTenantMsg] = useState<string | null>(null);
+  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
 
   const [sellingMode, setSellingMode] = useState<SellingMode | null>(null);
   const [sellingLoading, setSellingLoading] = useState(false);
@@ -125,18 +129,50 @@ export function AdminHomeSetupScreen() {
     await resetApp();
   };
 
-  if (isCloud && remoteAccess.status !== 'enabled') {
-    const message =
-      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
-    return (
-      <SafeAreaView style={styles.screen}>
-        <RemoteAccessLocked message={message} onBackHome={() => setHaMode('home')} />
-      </SafeAreaView>
-    );
-  }
+  useEffect(() => {
+    if (isCloud && remoteAccess.status === 'locked') {
+      setHaMode('home');
+    }
+  }, [isCloud, remoteAccess.status, setHaMode]);
 
   const handleToggleMode = () => {
-    setHaMode(isCloud ? 'home' : 'cloud');
+    if (isCloud) {
+      setHaMode('home');
+      return;
+    }
+    setCloudCheckResult('idle');
+    setCloudPromptVisible(true);
+  };
+
+  const handleConfirmCloud = async () => {
+    if (cloudChecking) return;
+    setCloudChecking(true);
+    setCloudCheckResult('checking');
+    let ok = false;
+    try {
+      ok = await checkRemoteAccessEnabled();
+    } catch {
+      // ignore, fallback to cloud locked screen
+    }
+    setCloudChecking(false);
+    if (ok) {
+      setCloudCheckResult('success');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setHaMode('cloud');
+      }, 700);
+    } else {
+      setCloudCheckResult('error');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setCloudCheckResult('idle');
+      }, 900);
+    }
+  };
+
+  const handleCancelCloud = () => {
+    if (cloudChecking) return;
+    setCloudPromptVisible(false);
   };
 
   const handleOpenWifiSetup = () => {
@@ -249,7 +285,7 @@ export function AdminHomeSetupScreen() {
             title={tenantLoading ? 'Adding...' : 'Add tenant'}
             onPress={() => void handleCreateTenant()}
             disabled={tenantLoading}
-            style={{ marginTop: spacing.sm }}
+            style={[styles.compactButton, { marginTop: spacing.sm }]}
           />
         </View>
 
@@ -263,7 +299,11 @@ export function AdminHomeSetupScreen() {
               <Text style={styles.helperText}>
                 Save this code to transfer or reset the property.
               </Text>
-              <PrimaryButton title="I saved the code" onPress={handleSavedClaim} />
+              <PrimaryButton
+                title="I saved the code"
+                onPress={handleSavedClaim}
+                style={styles.compactButton}
+              />
             </View>
           ) : (
             <>
@@ -322,6 +362,7 @@ export function AdminHomeSetupScreen() {
                       onPress={() => void handleConfirmDeregister(sellingMode)}
                       variant="danger"
                       disabled={sellingLoading}
+                      style={styles.compactButton}
                     />
                     <PrimaryButton
                       title="Cancel"
@@ -330,7 +371,7 @@ export function AdminHomeSetupScreen() {
                         setConfirmArmed(false);
                       }}
                       variant="ghost"
-                      style={styles.cancelButton}
+                      style={[styles.compactButton, styles.cancelButton]}
                       disabled={sellingLoading}
                     />
                   </View>
@@ -345,6 +386,17 @@ export function AdminHomeSetupScreen() {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onRemoteAccess={() => {
+          setMenuVisible(false);
+          navigation.navigate('RemoteAccessSetup' as never);
+        }}
+      />
+      <CloudModePrompt
+        visible={cloudPromptVisible}
+        checking={cloudChecking}
+        result={cloudCheckResult}
+        onCancel={handleCancelCloud}
+        onConfirm={handleConfirmCloud}
       />
     </SafeAreaView>
   );
@@ -352,16 +404,21 @@ export function AdminHomeSetupScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  container: { padding: spacing.xl, gap: spacing.lg },
-  header: { ...typography.heading },
-  subheader: { color: palette.textMuted },
+  container: {
+    padding: spacing.xl,
+    gap: spacing.lg,
+    width: '100%',
+    maxWidth: maxContentWidth,
+    alignSelf: 'center',
+  },
+  header: { ...typography.heading, letterSpacing: 0.2 },
+  subheader: { color: palette.textMuted, lineHeight: 18 },
   section: {
     backgroundColor: palette.surface,
-    borderRadius: radii.xl,
-    padding: spacing.xl,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
     borderWidth: 1,
     borderColor: palette.outline,
-    ...shadows.soft,
     gap: spacing.sm,
   },
   sectionHeaderRow: {
@@ -370,17 +427,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: palette.text },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: palette.text },
   label: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
   refreshButton: {
-    backgroundColor: palette.surfaceMuted,
     borderRadius: radii.pill,
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: palette.outline,
   },
-  refreshText: { fontSize: 12, color: palette.textMuted },
+  refreshText: { fontSize: 12, color: palette.primary, fontWeight: '600' },
   areaSuggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   areaChip: {
     borderRadius: radii.pill,
@@ -420,7 +474,7 @@ const styles = StyleSheet.create({
   confirmBox: {
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: '#fcd34d',
+    borderColor: '#fde68a',
     backgroundColor: '#fffbeb',
     padding: spacing.lg,
     marginTop: spacing.sm,
@@ -432,5 +486,12 @@ const styles = StyleSheet.create({
   cancelButton: {
     backgroundColor: palette.surfaceMuted,
     borderColor: palette.outline,
+  },
+  compactButton: {
+    paddingVertical: spacing.sm,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
   },
 });

@@ -1,5 +1,6 @@
 // src/screens/AdminSettingsScreen.tsx
 import React, { useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import { View, Text, StyleSheet, Alert, ScrollView, SafeAreaView } from 'react-native';
 import { useSession } from '../store/sessionStore';
 import { changePassword, logoutRemote } from '../api/auth';
@@ -9,6 +10,7 @@ import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
 export function AdminSettingsScreen() {
+  const navigation = useNavigation<any>();
   const { session, clearSession, setSession } = useSession();
   const user = session.user!;
   const haInitial = session.haConnection;
@@ -108,7 +110,19 @@ export function AdminSettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Dinodia Hub</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Dinodia Hub</Text>
+            <PrimaryButton
+              title="Enable Remote Access (Nabu Casa)"
+              variant="ghost"
+              onPress={() => navigation.navigate('RemoteAccessSetup' as never)}
+              style={styles.secondaryButton}
+            />
+          </View>
+          <Text style={styles.helperText}>
+            Enable secure cloud access from the in-home kiosk without revealing your Dinodia Hub
+            password.
+          </Text>
           <TextField
             label="HA username"
             placeholder="HA username"
@@ -171,4 +185,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   sectionTitle: { fontSize: 16, fontWeight: '800', marginBottom: 4, color: palette.text },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  helperText: { color: palette.textMuted, fontSize: 13, marginBottom: spacing.sm },
+  secondaryButton: { alignSelf: 'flex-start', paddingHorizontal: spacing.md },
 });

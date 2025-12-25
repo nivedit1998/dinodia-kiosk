@@ -27,14 +27,15 @@ import { getPrimaryLabel } from '../../utils/deviceLabels';
 import { getBlindPosition, getBrightnessPct, getTargetTemperature, getVolumePct } from '../../capabilities/attributeReaders';
 import { palette, radii, spacing, maxContentWidth, shadows, typography } from '../../ui/theme';
 import { TopBar } from '../../components/ui/TopBar';
+import { CloudModePrompt } from '../../components/CloudModePrompt';
 import { TextField } from '../../components/ui/TextField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
-import { RemoteAccessLocked } from '../../components/RemoteAccessLocked';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
 import { logoutRemote } from '../../api/auth';
 import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
+import { checkRemoteAccessEnabled } from '../../api/remoteAccess';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
@@ -55,12 +56,15 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const { width } = useWindowDimensions();
   const isWide = width > 900;
   const [menuVisible, setMenuVisible] = useState(false);
+  const isAdmin = session.user?.role === 'ADMIN';
   const isCloud = haMode === 'cloud';
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
-  const isAdmin = session.user?.role === 'ADMIN';
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
   const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
+  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
 
   const eligibleDevices = useMemo(() => getEligibleDevicesForAutomations(devices), [devices]);
   const [alias, setAlias] = useState(initialDraft?.alias ?? initialAlias ?? (isEditing ? 'Edit automation' : 'New automation'));
@@ -211,10 +215,49 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     }
   }, [anyTime, daysOfWeek, timeHour, timeMinute]);
 
-  const handleToggleMode = () => {
-    const next = isCloud ? 'home' : 'cloud';
-    void clearDeviceCacheForUserAndMode(userId, next).catch(() => undefined);
+  const switchMode = async (next: 'home' | 'cloud') => {
+    await clearDeviceCacheForUserAndMode(userId, next).catch(() => undefined);
     setHaMode(next);
+  };
+
+  const handleToggleMode = () => {
+    if (isCloud) {
+      void switchMode('home');
+      return;
+    }
+    setCloudCheckResult('idle');
+    setCloudPromptVisible(true);
+  };
+
+  const handleConfirmCloud = async () => {
+    if (cloudChecking) return;
+    setCloudChecking(true);
+    setCloudCheckResult('checking');
+    let ok = false;
+    try {
+      ok = await checkRemoteAccessEnabled();
+    } catch {
+      // ignore, fallback to cloud locked screen
+    }
+    setCloudChecking(false);
+    if (ok) {
+      setCloudCheckResult('success');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        void switchMode('cloud');
+      }, 700);
+    } else {
+      setCloudCheckResult('error');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setCloudCheckResult('idle');
+      }, 900);
+    }
+  };
+
+  const handleCancelCloud = () => {
+    if (cloudChecking) return;
+    setCloudPromptVisible(false);
   };
 
   const handleOpenWifiSetup = () => {
@@ -230,15 +273,11 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     await clearSession();
   };
 
-  if (isCloud && remoteAccess.status !== 'enabled') {
-    const message =
-      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
-    return (
-      <SafeAreaView style={styles.screen}>
-        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
-      </SafeAreaView>
-    );
-  }
+  useEffect(() => {
+    if (isCloud && remoteAccess.status === 'locked') {
+      void switchMode('home');
+    }
+  }, [isCloud, remoteAccess.status, switchMode]);
 
   const save = async () => {
     if (!actionDevice || !selectedActionId) {
@@ -657,6 +696,21 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onRemoteAccess={
+          isAdmin
+            ? () => {
+                setMenuVisible(false);
+                navigation.navigate('RemoteAccessSetup' as never);
+              }
+            : undefined
+        }
+      />
+      <CloudModePrompt
+        visible={cloudPromptVisible}
+        checking={cloudChecking}
+        result={cloudCheckResult}
+        onCancel={handleCancelCloud}
+        onConfirm={handleConfirmCloud}
       />
     </SafeAreaView>
   );

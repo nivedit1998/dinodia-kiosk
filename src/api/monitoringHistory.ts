@@ -2,6 +2,7 @@
 import { supabase } from './supabaseClient';
 import { getUserWithHaConnection } from './dinodia';
 import { ENV } from '../config/env';
+import { platformFetch } from './platformFetch';
 
 export type HistoryBucket = 'daily' | 'weekly' | 'monthly';
 
@@ -135,19 +136,14 @@ export async function fetchSensorHistoryForCurrentUser(
       msg.toLowerCase().includes('permission')
     ) {
       try {
-        const apiBase = ENV.DINODIA_PLATFORM_API.replace(/\/+$/, '');
-        const url = `${apiBase}/api/admin/monitoring/history`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, entityId, bucket }),
-        });
-        if (!res.ok) {
-          throw new Error(`Platform API error ${res.status}`);
-        }
-        const body = await res.json();
-        // Expect { unit, points }
-        return { unit: body.unit ?? null, points: Array.isArray(body.points) ? body.points : [] };
+        const { data } = await platformFetch<{ unit?: string | null; points?: HistoryPoint[] }>(
+          '/api/admin/monitoring/history',
+          {
+            method: 'POST',
+            body: JSON.stringify({ userId, entityId, bucket }),
+          }
+        );
+        return { unit: data.unit ?? null, points: Array.isArray(data.points) ? data.points : [] };
       } catch (err: any) {
         throw new Error('We could not load your history right now. Please try again.');
       }

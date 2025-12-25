@@ -282,3 +282,117 @@ export async function fetchHaState(
 ): Promise<HAState> {
   return callHomeAssistantAPI<HAState>(ha, `/api/states/${entityId}`);
 }
+
+export async function detectNabuCasaCloudUrl(
+  ha: HaConnectionLike,
+  timeoutMs = 4000
+): Promise<string | null> {
+  const url = buildHaUrl(ha.baseUrl, '/api/config');
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${ha.longLivedToken}`,
+        },
+      },
+      timeoutMs
+    );
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => null)) as { external_url?: string } | null;
+    const candidate = (data?.external_url ?? '').trim();
+    if (candidate && candidate.includes('.ui.nabu.casa')) {
+      return candidate.replace(/\/+$/, '');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const MASK_REGEX = /[•●∙⋅·*]/;
+
+export function isMaskedCloudUrl(url: string): boolean {
+  return MASK_REGEX.test(url);
+}
+
+function collectUiUrls(obj: any): string[] {
+  const results: string[] = [];
+  const stack = [obj];
+  while (stack.length) {
+    const current = stack.pop();
+    if (typeof current === 'string') {
+      if (current.includes('.ui.nabu.casa')) {
+        results.push(current);
+      }
+    } else if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+    } else if (current && typeof current === 'object') {
+      for (const key of Object.keys(current)) {
+        stack.push((current as any)[key]);
+      }
+    }
+  }
+  return results;
+}
+
+export async function detectNabuCasaRemoteUiUrl(
+  ha: HaConnectionLike,
+  timeoutMs = 4000
+): Promise<string | null> {
+  // Strategy A: WebSocket cloud/status
+  try {
+    const mod = await import('./haWebSocket');
+    if (mod && typeof mod.haWsCall === 'function') {
+      try {
+        const wsResult = await mod.haWsCall<any>(ha, 'cloud/status');
+        const urls = collectUiUrls(wsResult)
+          .filter((u) => typeof u === 'string' && u.startsWith('https://') && u.includes('.ui.nabu.casa'))
+          .map((u) => u.replace(/\/+$/, ''));
+        const first = urls.find((u) => !isMaskedCloudUrl(u));
+        if (first) return first;
+      } catch {
+        // ignore ws failures
+      }
+    }
+  } catch {
+    // ignore dynamic import issues
+  }
+
+  // Strategy B: REST /api/config external_url
+  try {
+    const restUrl = await detectNabuCasaCloudUrl(ha, timeoutMs);
+    if (restUrl && !isMaskedCloudUrl(restUrl)) {
+      return restUrl;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+export async function verifyHaCloudConnection(
+  ha: HaConnectionLike,
+  timeoutMs = 4000
+): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(
+      buildHaUrl(ha.baseUrl, '/api/config'),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${ha.longLivedToken}`,
+          'Content-Type': 'application/json',
+        },
+      },
+      timeoutMs
+    );
+    if (!res.ok) return false;
+    await res.json().catch(() => ({}));
+    return true;
+  } catch {
+    return false;
+  }
+}

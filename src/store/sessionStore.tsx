@@ -5,6 +5,8 @@ import CookieManager from '@react-native-cookies/cookies';
 import type { AuthUser } from '../api/auth';
 import type { HaConnection } from '../models/haConnection';
 import { logoutRemote } from '../api/auth';
+import { clearPlatformCookie } from '../api/platformFetch';
+import { clearPlatformToken, getPlatformToken, setPlatformToken } from '../api/platformToken';
 import { supabase } from '../api/supabaseClient';
 import { clearTokens } from '../spotify/spotifyApi';
 import { loadJson, saveJson, removeKey } from '../utils/storage';
@@ -20,7 +22,7 @@ export type HaMode = 'home' | 'cloud';
 type SessionContextValue = {
   session: Session;
   loading: boolean;
-  setSession: (s: Session) => Promise<void>;
+  setSession: (s: Session, opts?: { platformToken?: string | null }) => Promise<void>;
   clearSession: () => Promise<void>;
   resetApp: () => Promise<void>;
   haMode: HaMode;
@@ -43,9 +45,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void (async () => {
-      const stored = await loadJson<Session>(SESSION_KEY);
-      if (stored) {
+      const [stored, token] = await Promise.all([
+        loadJson<Session>(SESSION_KEY),
+        getPlatformToken(),
+      ]);
+      if (stored && token) {
         setSessionState(stored);
+      } else {
+        await removeKey(SESSION_KEY).catch(() => undefined);
       }
       // Always start new app sessions in home mode.
       setHaModeState('home');
@@ -62,6 +69,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         await clearAllDeviceCacheForUser(userId).catch(() => undefined);
         await removeKey(`tenant_selected_area_${userId}`).catch(() => undefined);
       }
+      await clearPlatformToken().catch(() => undefined);
+      await clearPlatformCookie().catch(() => undefined);
       await clearTokens().catch(() => undefined);
       await removeKey(SPOTIFY_EPHEMERAL_KEY).catch(() => undefined);
       await CookieManager.clearAll(true).catch(() => undefined);
@@ -118,14 +127,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loading, session.user?.id]);
 
-  const setSession = async (s: Session) => {
+  const setSession = async (s: Session, opts?: { platformToken?: string | null }) => {
     const previousUserId = session.user?.id;
     if (previousUserId && s.user?.id && previousUserId !== s.user.id) {
       await clearAllDeviceCacheForUser(previousUserId).catch(() => undefined);
+      await clearPlatformToken().catch(() => undefined);
+      await clearPlatformCookie().catch(() => undefined);
     }
     setSessionState(s);
     setHaModeState('home');
     await saveJson(SESSION_KEY, s);
+    if (opts?.platformToken && typeof opts.platformToken === 'string' && opts.platformToken.trim().length > 0) {
+      await setPlatformToken(opts.platformToken);
+    }
   };
 
   const clearSession = async () => {
@@ -133,6 +147,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setSessionState({ user: null, haConnection: null });
     setHaModeState('home');
     await removeKey(SESSION_KEY);
+    await clearPlatformToken().catch(() => undefined);
+    await clearPlatformCookie().catch(() => undefined);
     if (userId) {
       await clearAllDeviceCacheForUser(userId).catch(() => undefined);
     }

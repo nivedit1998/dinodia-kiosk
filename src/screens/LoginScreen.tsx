@@ -83,17 +83,20 @@ export function LoginScreen() {
     setNeedsEmail(false);
   };
 
-  const finalizeLogin = async (loginUsername: string) => {
+  const finalizeLogin = async (loginUsername: string, platformToken?: string | null) => {
     const userRecord = await fetchUserByUsername(loginUsername);
     if (!userRecord) {
       throw new Error('We could not find your account. Please try again.');
     }
     await clearAllDeviceCacheForUser(userRecord.id);
     const { haConnection } = await getUserWithHaConnection(userRecord.id);
-    await setSession({
-      user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
-      haConnection,
-    });
+    await setSession(
+      {
+        user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
+        haConnection,
+      },
+      { platformToken }
+    );
   };
 
   useEffect(() => {
@@ -174,7 +177,7 @@ export function LoginScreen() {
       });
 
       if (result.status === 'OK') {
-        await finalizeLogin(trimmedUsername);
+        await finalizeLogin(trimmedUsername, result.token);
         return;
       }
 

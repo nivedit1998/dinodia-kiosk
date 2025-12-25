@@ -35,11 +35,12 @@ import {
 } from '../api/haRegistry';
 import { CAPABILITIES } from '../capabilities/deviceCapabilities';
 import { HeaderMenu } from '../components/HeaderMenu';
-import { RemoteAccessLocked } from '../components/RemoteAccessLocked';
+import { CloudModePrompt } from '../components/CloudModePrompt';
 import { TextField } from '../components/ui/TextField';
 import { TopBar } from '../components/ui/TopBar';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
+import { checkRemoteAccessEnabled } from '../api/remoteAccess';
 import { logoutRemote } from '../api/auth';
 import { useSession } from '../store/sessionStore';
 import { palette, radii, shadows, spacing, typography, maxContentWidth } from '../ui/theme';
@@ -159,6 +160,9 @@ export function TenantAddDevicesScreen() {
   }, [haMode, session.haConnection]);
   const [menuVisible, setMenuVisible] = useState(false);
   const [activeFlow, setActiveFlow] = useState<FlowType>(null);
+  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
+  const [cloudChecking, setCloudChecking] = useState(false);
+  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
 
   const [areas, setAreas] = useState<string[]>([]);
   const [areasLoading, setAreasLoading] = useState(false);
@@ -552,18 +556,50 @@ export function TenantAddDevicesScreen() {
   };
 
   const handleToggleMode = () => {
-    setHaMode(isCloud ? 'home' : 'cloud');
+    if (isCloud) {
+      setHaMode('home');
+      return;
+    }
+    setCloudCheckResult('idle');
+    setCloudPromptVisible(true);
   };
 
-  if (isCloud && remoteAccess.status !== 'enabled') {
-    const message =
-      remoteAccess.message || 'Page unlocked when remote access is enabled by homeowner.';
-    return (
-      <SafeAreaView style={styles.screen}>
-        <RemoteAccessLocked message={message} onBackHome={handleToggleMode} />
-      </SafeAreaView>
-    );
-  }
+  const handleConfirmCloud = async () => {
+    if (cloudChecking) return;
+    setCloudChecking(true);
+    setCloudCheckResult('checking');
+    let ok = false;
+    try {
+      ok = await checkRemoteAccessEnabled();
+    } catch {
+      // ignore, fallback to cloud locked screen
+    }
+    setCloudChecking(false);
+    if (ok) {
+      setCloudCheckResult('success');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setHaMode('cloud');
+      }, 700);
+    } else {
+      setCloudCheckResult('error');
+      setTimeout(() => {
+        setCloudPromptVisible(false);
+        setCloudCheckResult('idle');
+      }, 900);
+    }
+  };
+
+  const handleCancelCloud = () => {
+    if (cloudChecking) return;
+    setCloudPromptVisible(false);
+  };
+
+  useEffect(() => {
+    if (isCloud && remoteAccess.status === 'locked') {
+      setHaMode('home');
+    }
+  }, [isCloud, remoteAccess.status, setHaMode]);
 
   const statusMessage = buildStatusMessage(sessionState);
 
@@ -936,6 +972,13 @@ export function TenantAddDevicesScreen() {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+      />
+      <CloudModePrompt
+        visible={cloudPromptVisible}
+        checking={cloudChecking}
+        result={cloudCheckResult}
+        onCancel={handleCancelCloud}
+        onConfirm={handleConfirmCloud}
       />
 
       <Modal visible={typePickerVisible} transparent animationType="fade" onRequestClose={() => setTypePickerVisible(false)}>
