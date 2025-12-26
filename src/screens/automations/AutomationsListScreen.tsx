@@ -128,6 +128,7 @@ export function AutomationsListScreen({}: Props) {
     isCloud,
     onSwitchToCloud: () => switchMode('cloud'),
     onSwitchToHome: () => switchMode('home'),
+    haConnection: session.haConnection,
   });
 
   const handleOpenWifiSetup = useCallback(() => {
@@ -405,6 +406,21 @@ export function AutomationsListScreen({}: Props) {
         result={cloudCheckResult}
         onCancel={handleCancelCloud}
         onConfirm={handleConfirmCloud}
+        title={haMode === 'cloud' ? 'Move to Home mode?' : 'Move to Cloud mode?'}
+        subtitle={
+          haMode === 'cloud'
+            ? 'Instant control when you are on your home network.'
+            : 'Control your devices from anywhere in the world.'
+        }
+        checkingText={
+          haMode === 'cloud'
+            ? 'Checking your home network connection'
+            : 'checking if remote access is enabled for this home'
+        }
+        successText={haMode === 'cloud' ? 'Home connection confirmed' : 'Cloud access confirmed'}
+        errorText={
+          haMode === 'cloud' ? 'Home network is not reachable right now' : 'Cloud access is not enabled yet'
+        }
       />
     </SafeAreaView>
   );

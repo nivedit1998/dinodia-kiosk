@@ -41,6 +41,7 @@ import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { TopBar } from '../components/ui/TopBar';
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
+import type { HaConnection } from '../models/haConnection';
 
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -56,9 +57,17 @@ type DashboardContentProps = {
   haMode: HaMode;
   clearSession: () => Promise<void>;
   setHaMode: (mode: HaMode) => void;
+  haConnection: HaConnection | null;
 };
 
-function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: DashboardContentProps) {
+function DashboardContent({
+  userId,
+  role,
+  haMode,
+  clearSession,
+  setHaMode,
+  haConnection,
+}: DashboardContentProps) {
   const navigation = useNavigation<any>();
   const isAdmin = role === 'ADMIN';
   const hideSensors = false; // Show sensors for all roles; tenants are already filtered by access rules.
@@ -209,6 +218,7 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
     isCloud,
     onSwitchToCloud: () => switchMode('cloud'),
     onSwitchToHome: () => switchMode('home'),
+    haConnection,
   });
 
   const handleOpenWifiSetup = useCallback(() => {
@@ -451,6 +461,21 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
         result={cloudCheckResult}
         onCancel={handleCancelCloud}
         onConfirm={handleConfirmCloud}
+        title={haMode === 'cloud' ? 'Move to Home mode?' : 'Move to Cloud mode?'}
+        subtitle={
+          haMode === 'cloud'
+            ? 'Instant control when you are on your home network.'
+            : 'Control your devices from anywhere in the world.'
+        }
+        checkingText={
+          haMode === 'cloud'
+            ? 'Checking your home network connection'
+            : 'checking if remote access is enabled for this home'
+        }
+        successText={haMode === 'cloud' ? 'Home connection confirmed' : 'Cloud access confirmed'}
+        errorText={
+          haMode === 'cloud' ? 'Home network is not reachable right now' : 'Cloud access is not enabled yet'
+        }
       />
       </SafeAreaView>
     );
@@ -473,6 +498,7 @@ export function DashboardScreen({ role }: DashboardScreenProps) {
       haMode={haMode}
       clearSession={clearSession}
       setHaMode={setHaMode}
+      haConnection={session.haConnection}
     />
   );
 }

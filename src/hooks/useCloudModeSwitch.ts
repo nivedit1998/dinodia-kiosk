@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
-import { checkRemoteAccessEnabled } from '../api/remoteAccess';
+import { checkHomeModeReachable, checkRemoteAccessEnabled } from '../api/remoteAccess';
+import type { HaConnection } from '../models/haConnection';
 
 type ResultState = 'idle' | 'checking' | 'success' | 'error';
 
@@ -7,23 +8,20 @@ type Options = {
   isCloud: boolean;
   onSwitchToCloud: () => void | Promise<void>;
   onSwitchToHome?: () => void | Promise<void>;
+  haConnection?: HaConnection | null;
 };
 
-export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome }: Options) {
+export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome, haConnection }: Options) {
   const [promptVisible, setPromptVisible] = useState(false);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<ResultState>('idle');
+  const [targetMode, setTargetMode] = useState<'cloud' | 'home'>(isCloud ? 'home' : 'cloud');
 
   const openPrompt = useCallback(() => {
-    if (isCloud) {
-      if (onSwitchToHome) {
-        void onSwitchToHome();
-      }
-      return;
-    }
     setResult('idle');
+    setTargetMode(isCloud ? 'home' : 'cloud');
     setPromptVisible(true);
-  }, [isCloud, onSwitchToHome]);
+  }, [isCloud]);
 
   const cancelPrompt = useCallback(() => {
     if (checking) return;
@@ -35,31 +33,54 @@ export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome }:
     setChecking(true);
     setResult('checking');
     let ok = false;
-    try {
-      ok = await checkRemoteAccessEnabled();
-    } catch {
-      // ignore, fallback to cloud locked screen
-    }
-    setChecking(false);
-    if (ok) {
-      setResult('success');
-      setTimeout(() => {
-        setPromptVisible(false);
-        void onSwitchToCloud();
-      }, 700);
+    if (targetMode === 'cloud') {
+      try {
+        ok = await checkRemoteAccessEnabled();
+      } catch {
+        // ignore, fallback to cloud locked screen
+      }
+      setChecking(false);
+      if (ok) {
+        setResult('success');
+        setTimeout(() => {
+          setPromptVisible(false);
+          void onSwitchToCloud();
+        }, 700);
+      } else {
+        setResult('error');
+        setTimeout(() => {
+          setPromptVisible(false);
+          setResult('idle');
+        }, 900);
+      }
     } else {
-      setResult('error');
-      setTimeout(() => {
-        setPromptVisible(false);
-        setResult('idle');
-      }, 900);
+      try {
+        ok = haConnection ? await checkHomeModeReachable(haConnection) : false;
+      } catch {
+        ok = false;
+      }
+      setChecking(false);
+      if (ok) {
+        setResult('success');
+        setTimeout(() => {
+          setPromptVisible(false);
+          onSwitchToHome && onSwitchToHome();
+        }, 700);
+      } else {
+        setResult('error');
+        setTimeout(() => {
+          setPromptVisible(false);
+          setResult('idle');
+        }, 900);
+      }
     }
-  }, [checking, onSwitchToCloud]);
+  }, [checking, haConnection, onSwitchToCloud, onSwitchToHome, targetMode]);
 
   return {
     promptVisible,
     checking,
     result,
+    targetMode,
     openPrompt,
     cancelPrompt,
     confirmPrompt,

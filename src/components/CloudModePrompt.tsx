@@ -9,9 +9,25 @@ type Props = {
   result: 'idle' | 'checking' | 'success' | 'error';
   onCancel: () => void;
   onConfirm: () => void;
+  title?: string;
+  subtitle?: string;
+  checkingText?: string;
+  successText?: string;
+  errorText?: string;
 };
 
-export function CloudModePrompt({ visible, checking, result, onCancel, onConfirm }: Props) {
+export function CloudModePrompt({
+  visible,
+  checking,
+  result,
+  onCancel,
+  onConfirm,
+  title = 'Move to Cloud mode?',
+  subtitle = 'Control your devices from anywhere in the world.',
+  checkingText = 'checking if remote access is enabled for this home',
+  successText = 'Cloud access confirmed',
+  errorText = 'Cloud access is not enabled yet',
+}: Props) {
   const showChecking = result === 'checking';
   const showSuccess = result === 'success';
   const showError = result === 'error';
@@ -25,16 +41,12 @@ export function CloudModePrompt({ visible, checking, result, onCancel, onConfirm
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropPress} onPress={checking ? undefined : onCancel} />
         <View style={styles.card}>
-          <Text style={styles.title}>Move to Cloud mode?</Text>
-          <Text style={styles.subtitle}>
-            Control your devices from anywhere in the world.
-          </Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
           {showChecking ? (
             <View style={styles.checkRow}>
               <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.checkText}>
-                checking if remote access is enabled for this home
-              </Text>
+              <Text style={styles.checkText}>{checkingText}</Text>
             </View>
           ) : null}
           {showSuccess ? (
@@ -42,7 +54,7 @@ export function CloudModePrompt({ visible, checking, result, onCancel, onConfirm
               <View style={[styles.resultDot, styles.resultDotSuccess]}>
                 <Text style={styles.resultDotText}>✓</Text>
               </View>
-              <Text style={styles.checkText}>Cloud access confirmed</Text>
+              <Text style={styles.checkText}>{successText}</Text>
             </View>
           ) : null}
           {showError ? (
@@ -50,7 +62,7 @@ export function CloudModePrompt({ visible, checking, result, onCancel, onConfirm
               <View style={[styles.resultDot, styles.resultDotError]}>
                 <Text style={styles.resultDotText}>✕</Text>
               </View>
-              <Text style={styles.checkText}>Cloud access is not enabled yet</Text>
+              <Text style={styles.checkText}>{errorText}</Text>
             </View>
           ) : null}
           {!showChecking && !showSuccess && !showError ? (
