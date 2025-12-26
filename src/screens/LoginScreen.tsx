@@ -114,8 +114,12 @@ export function LoginScreen() {
         if (status === 'APPROVED') {
           setVerifying(true);
           const identity = await getDeviceIdentity();
-          await completeChallenge(challengeId, identity.deviceId, identity.deviceLabel);
-          await finalizeLogin(pendingUsername);
+          const { token } = await completeChallenge(
+            challengeId,
+            identity.deviceId,
+            identity.deviceLabel
+          );
+          await finalizeLogin(pendingUsername, token);
           if (cancelled) return;
           resetVerification();
           return;

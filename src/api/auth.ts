@@ -34,6 +34,7 @@ type ChallengeStatusResponse = {
 type ChallengeCompleteResponse = {
   ok?: boolean;
   role?: Role;
+  token?: string;
   error?: string;
 };
 
@@ -129,7 +130,7 @@ export async function completeChallenge(
   challengeId: string,
   deviceId: string,
   deviceLabel: string
-): Promise<{ role: Role }> {
+): Promise<{ role: Role; token?: string }> {
   const { data } = await platformFetch<ChallengeCompleteResponse>(
     `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}/complete`,
     {
@@ -138,7 +139,10 @@ export async function completeChallenge(
     }
   );
   if (data.ok && data.role) {
-    return { role: data.role };
+    if (typeof data.token === 'string' && data.token.trim().length > 0) {
+      await setPlatformToken(data.token);
+    }
+    return { role: data.role, token: data.token };
   }
   throw new Error(
     typeof data.error === 'string' && data.error.trim().length > 0

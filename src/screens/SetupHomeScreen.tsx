@@ -75,17 +75,20 @@ export function SetupHomeScreen() {
     setInfo(null);
   };
 
-  const finalizeLogin = async (username: string) => {
+  const finalizeLogin = async (username: string, platformToken?: string | null) => {
     const userRecord = await fetchUserByUsername(username);
     if (!userRecord) {
       throw new Error('We could not find your account. Please try again.');
     }
     await clearAllDeviceCacheForUser(userRecord.id);
     const { haConnection } = await getUserWithHaConnection(userRecord.id);
-    await setSession({
-      user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
-      haConnection,
-    });
+    await setSession(
+      {
+        user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
+        haConnection,
+      },
+      { platformToken }
+    );
   };
 
   useEffect(() => {
@@ -101,8 +104,12 @@ export function SetupHomeScreen() {
         if (status === 'APPROVED') {
           setVerifying(true);
           const identity = await getDeviceIdentity();
-          await completeChallenge(challengeId, identity.deviceId, identity.deviceLabel);
-          await finalizeLogin(form.username.trim());
+          const { token } = await completeChallenge(
+            challengeId,
+            identity.deviceId,
+            identity.deviceLabel
+          );
+          await finalizeLogin(form.username.trim(), token);
           if (cancelled) return;
           resetVerification();
           return;
