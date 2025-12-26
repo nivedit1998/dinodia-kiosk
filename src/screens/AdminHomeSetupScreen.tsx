@@ -15,6 +15,7 @@ import {
   createTenant,
   deleteTenant as deleteTenantApi,
   deregisterProperty,
+  fetchSellingCleanupTargets,
   fetchTenants,
   updateTenantAreas,
   type TenantRecord,
@@ -30,6 +31,8 @@ import { maxContentWidth, palette, radii, spacing, typography } from '../ui/them
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
+import { callHaService, probeHaReachability, type HaConnectionLike } from '../api/ha';
+import { haWsCall } from '../api/haWebSocket';
 
 type SellingMode = 'FULL_RESET' | 'OWNER_TRANSFER';
 type TenantInfo = TenantRecord;
@@ -38,6 +41,71 @@ type TenantActionState = { saving: boolean; error: string | null };
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
 };
+
+const MAX_REGISTRY_REMOVALS = 200;
+
+function buildHaCandidates(
+  haConnection: { baseUrl: string; cloudUrl?: string | null; longLivedToken: string }
+): HaConnectionLike[] {
+  const candidates: HaConnectionLike[] = [];
+  const seen = new Set<string>();
+  const base = (haConnection.baseUrl || '').trim().replace(/\/+$/, '');
+  const cloud = (haConnection.cloudUrl || '').trim().replace(/\/+$/, '');
+  if (base) {
+    candidates.push({ baseUrl: base, longLivedToken: haConnection.longLivedToken });
+    seen.add(base);
+  }
+  if (cloud && !seen.has(cloud)) {
+    candidates.push({ baseUrl: cloud, longLivedToken: haConnection.longLivedToken });
+  }
+  return candidates;
+}
+
+async function listHaAutomationIds(ha: HaConnectionLike): Promise<string[]> {
+  const url = `${ha.baseUrl.replace(/\/+$/, '')}/api/config/automation`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${ha.longLivedToken}` },
+  });
+  if (!res.ok) return [];
+  const json = await res.json().catch(() => []);
+  if (!Array.isArray(json)) return [];
+  return json
+    .map((a: any) => (typeof a?.id === 'string' ? a.id.trim() : ''))
+    .filter(Boolean);
+}
+
+async function deleteHaAutomation(ha: HaConnectionLike, id: string) {
+  const url = `${ha.baseUrl.replace(/\/+$/, '')}/api/config/automation/config/${encodeURIComponent(id)}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${ha.longLivedToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `Failed to delete automation ${id}`);
+  }
+}
+
+async function removeEntities(ha: HaConnectionLike, entityIds: string[]) {
+  for (const id of entityIds) {
+    try {
+      await haWsCall(ha, 'config/entity_registry/remove', { entity_id: id });
+    } catch {
+      // continue; failures are tolerated
+    }
+  }
+}
+
+async function removeDevices(ha: HaConnectionLike, deviceIds: string[]) {
+  for (const id of deviceIds) {
+    try {
+      await haWsCall(ha, 'config/device_registry/remove', { device_id: id });
+    } catch {
+      // continue; failures are tolerated
+    }
+  }
+}
 
 export function AdminHomeSetupScreen() {
   const navigation = useNavigation<any>();
@@ -68,6 +136,7 @@ export function AdminHomeSetupScreen() {
   const [sellingError, setSellingError] = useState<string | null>(null);
   const [claimCode, setClaimCode] = useState<string | null>(null);
   const [confirmArmed, setConfirmArmed] = useState(false);
+  const [cleanupStep, setCleanupStep] = useState<string | null>(null);
 
   const availableAreas = useMemo(() => {
     const set = new Set<string>();
@@ -224,13 +293,19 @@ export function AdminHomeSetupScreen() {
     setSellingLoading(true);
     setSellingError(null);
     try {
-      const result = await deregisterProperty(mode);
+      if (mode === 'FULL_RESET') {
+        await runLocalFullResetCleanup();
+      }
+      const result = await deregisterProperty(mode, {
+        cleanup: mode === 'FULL_RESET' ? 'device' : 'platform',
+      });
       setClaimCode(result.claimCode);
       setSellingMode(mode);
     } catch (err) {
       setSellingError(err instanceof Error ? err.message : 'We could not process this request.');
     } finally {
       setSellingLoading(false);
+      setCleanupStep(null);
     }
   };
 
@@ -241,6 +316,61 @@ export function AdminHomeSetupScreen() {
   const handleLogout = async () => {
     await resetApp();
   };
+
+  const runLocalFullResetCleanup = useCallback(async () => {
+    if (!session.haConnection) {
+      throw new Error('Dinodia Hub connection is not configured.');
+    }
+    setCleanupStep('Fetching cleanup targets…');
+    const targets = await fetchSellingCleanupTargets();
+    const deviceIds = Array.isArray(targets.deviceIds)
+      ? targets.deviceIds.filter((id) => typeof id === 'string' && id.trim()).slice(0, MAX_REGISTRY_REMOVALS)
+      : [];
+    const entityIds = Array.isArray(targets.entityIds)
+      ? targets.entityIds.filter((id) => typeof id === 'string' && id.trim()).slice(0, MAX_REGISTRY_REMOVALS)
+      : [];
+
+    const candidates = buildHaCandidates(session.haConnection);
+    if (candidates.length === 0) {
+      throw new Error('Dinodia Hub connection is missing.');
+    }
+
+    let lastError: unknown = null;
+    for (const ha of candidates) {
+      const reachable = await probeHaReachability(ha).catch(() => false);
+      if (!reachable) {
+        lastError = new Error(`Could not reach Dinodia Hub at ${ha.baseUrl}`);
+        continue;
+      }
+      try {
+        setCleanupStep('Removing Dinodia automations…');
+        const automationIds = await listHaAutomationIds(ha);
+        const dinodiaIds = automationIds.filter((id) => id.toLowerCase().startsWith('dinodia_'));
+        for (const id of dinodiaIds) {
+          await deleteHaAutomation(ha, id);
+        }
+
+        setCleanupStep('Removing Dinodia devices…');
+        if (entityIds.length > 0) {
+          await removeEntities(ha, entityIds);
+        }
+        if (deviceIds.length > 0) {
+          await removeDevices(ha, deviceIds);
+        }
+
+        setCleanupStep('Signing out cloud session…');
+        await callHaService(ha, 'cloud', 'logout', {}, 4000).catch(() => undefined);
+        setCleanupStep(null);
+        return;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    setCleanupStep(null);
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Local cleanup failed. Please try again from your home network.');
+  }, [session.haConnection]);
 
   useEffect(() => {
     if (!viewTenantsOpen || tenantLocked) return;
@@ -600,6 +730,7 @@ export function AdminHomeSetupScreen() {
                       ? 'This will remove all tenant devices, automations, alexa links and accounts and fully reset your Dinodia home.'
                       : 'This will remove your property but keep all tenants, devices, automations, and integrations.'}
                   </Text>
+                  {cleanupStep ? <Text style={styles.helperText}>{cleanupStep}</Text> : null}
                   <View style={styles.confirmActions}>
                     <PrimaryButton
                       title={sellingLoading ? 'Working...' : confirmArmed ? "Yes, I'm sure" : 'Yes'}

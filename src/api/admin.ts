@@ -103,10 +103,29 @@ export async function deleteTenant(tenantId: number): Promise<void> {
   }
 }
 
-export async function deregisterProperty(mode: SellingMode): Promise<{ claimCode: string }> {
+export async function fetchSellingCleanupTargets(): Promise<{ deviceIds: string[]; entityIds: string[] }> {
+  const { data } = await platformFetch<{ ok: boolean; targets?: { deviceIds: string[]; entityIds: string[] } }>(
+    '/api/admin/selling-property',
+    {
+      method: 'GET',
+    }
+  );
+  if (!data.ok || !data.targets) {
+    throw new Error(data.error || 'Failed to load cleanup targets.');
+  }
+  return {
+    deviceIds: Array.isArray(data.targets.deviceIds) ? data.targets.deviceIds : [],
+    entityIds: Array.isArray(data.targets.entityIds) ? data.targets.entityIds : [],
+  };
+}
+
+export async function deregisterProperty(
+  mode: SellingMode,
+  opts: { cleanup?: 'platform' | 'device' } = {}
+): Promise<{ claimCode: string }> {
   const { data } = await platformFetch<SellingResponse>('/api/admin/selling-property', {
     method: 'POST',
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, cleanup: opts.cleanup }),
   });
   if (!data.ok || !data.claimCode) {
     throw new Error(data.error || 'We could not retrieve the claim code. Please try again.');

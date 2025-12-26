@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import {
   loginWithCredentials,
   fetchChallengeStatus,
@@ -27,6 +28,7 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 const { InlineWifiSetupLauncher } = NativeModules;
 
 export function LoginScreen() {
+  const navigation = useNavigation<any>();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
@@ -319,6 +321,23 @@ export function LoginScreen() {
             >
               <Text style={styles.wifiText}>Set up Wi-Fi</Text>
             </TouchableOpacity>
+
+            <View style={styles.ctaGroup}>
+              <PrimaryButton
+                title="First time here? Set up this home"
+                onPress={() => navigation.navigate('SetupHome')}
+                variant="ghost"
+                style={styles.ctaButton}
+                disabled={loading || verifying}
+              />
+              <PrimaryButton
+                title="Claim a home (have a code?)"
+                onPress={() => navigation.navigate('ClaimHome')}
+                variant="ghost"
+                style={styles.ctaButton}
+                disabled={loading || verifying}
+              />
+            </View>
           </>
         )}
       </View>
@@ -356,6 +375,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   wifiText: { color: palette.primary, fontWeight: '700' },
+  ctaGroup: { marginTop: spacing.md, gap: spacing.sm },
+  ctaButton: { paddingVertical: spacing.sm },
   footer: { alignItems: 'center', marginTop: spacing.lg },
   footerText: { color: palette.textMuted, fontSize: 12 },
   statusRow: {
