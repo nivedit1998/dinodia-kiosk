@@ -17,7 +17,6 @@ import type { UIDevice } from '../models/device';
 import { normalizeLabel } from '../utils/deviceLabels';
 import { isDetailDevice, isSensorDevice } from '../utils/deviceKinds';
 import { logoutRemote } from '../api/auth';
-import { checkRemoteAccessEnabled } from '../api/remoteAccess';
 import { DeviceCard } from '../components/DeviceCard';
 import type { DeviceCardSize } from '../components/DeviceCard';
 import { DeviceDetail } from '../components/DeviceDetail';
@@ -41,6 +40,7 @@ import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { TopBar } from '../components/ui/TopBar';
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
+import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -70,9 +70,6 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
   const [selectedArea, setSelectedArea] = useState<string | typeof ALL_AREAS>(ALL_AREAS);
   const [areaMenuVisible, setAreaMenuVisible] = useState(false);
   const [areaPrefLoaded, setAreaPrefLoaded] = useState(!persistAreaSelection);
-  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
-  const [cloudChecking, setCloudChecking] = useState(false);
-  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const isCloud = haMode === 'cloud';
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
@@ -201,45 +198,18 @@ function DashboardContent({ userId, role, haMode, clearSession, setHaMode }: Das
     [setHaMode, userId]
   );
 
-  const handleToggleMode = useCallback(() => {
-    if (isCloud) {
-      void switchMode('home');
-      return;
-    }
-    setCloudCheckResult('idle');
-    setCloudPromptVisible(true);
-  }, [isCloud, switchMode]);
-
-  const handleConfirmCloud = useCallback(async () => {
-    if (cloudChecking) return;
-    setCloudChecking(true);
-    setCloudCheckResult('checking');
-    let ok = false;
-    try {
-      ok = await checkRemoteAccessEnabled();
-    } catch {
-      // ignore, fallback to cloud locked screen
-    }
-    setCloudChecking(false);
-    if (ok) {
-      setCloudCheckResult('success');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        void switchMode('cloud');
-      }, 700);
-    } else {
-      setCloudCheckResult('error');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setCloudCheckResult('idle');
-      }, 900);
-    }
-  }, [cloudChecking, switchMode]);
-
-  const handleCancelCloud = useCallback(() => {
-    if (cloudChecking) return;
-    setCloudPromptVisible(false);
-  }, [cloudChecking]);
+  const {
+    promptVisible: cloudPromptVisible,
+    checking: cloudChecking,
+    result: cloudCheckResult,
+    openPrompt: handleToggleMode,
+    cancelPrompt: handleCancelCloud,
+    confirmPrompt: handleConfirmCloud,
+  } = useCloudModeSwitch({
+    isCloud,
+    onSwitchToCloud: () => switchMode('cloud'),
+    onSwitchToHome: () => switchMode('home'),
+  });
 
   const handleOpenWifiSetup = useCallback(() => {
     if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {

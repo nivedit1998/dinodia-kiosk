@@ -40,10 +40,10 @@ import { TextField } from '../components/ui/TextField';
 import { TopBar } from '../components/ui/TopBar';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
-import { checkRemoteAccessEnabled } from '../api/remoteAccess';
 import { logoutRemote } from '../api/auth';
 import { useSession } from '../store/sessionStore';
 import { palette, radii, shadows, spacing, typography, maxContentWidth } from '../ui/theme';
+import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 
 const { InlineWifiSetupLauncher, QrScanner } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -160,9 +160,6 @@ export function TenantAddDevicesScreen() {
   }, [haMode, session.haConnection]);
   const [menuVisible, setMenuVisible] = useState(false);
   const [activeFlow, setActiveFlow] = useState<FlowType>(null);
-  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
-  const [cloudChecking, setCloudChecking] = useState(false);
-  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
 
   const [areas, setAreas] = useState<string[]>([]);
   const [areasLoading, setAreasLoading] = useState(false);
@@ -555,45 +552,18 @@ export function TenantAddDevicesScreen() {
     await clearSession();
   };
 
-  const handleToggleMode = () => {
-    if (isCloud) {
-      setHaMode('home');
-      return;
-    }
-    setCloudCheckResult('idle');
-    setCloudPromptVisible(true);
-  };
-
-  const handleConfirmCloud = async () => {
-    if (cloudChecking) return;
-    setCloudChecking(true);
-    setCloudCheckResult('checking');
-    let ok = false;
-    try {
-      ok = await checkRemoteAccessEnabled();
-    } catch {
-      // ignore, fallback to cloud locked screen
-    }
-    setCloudChecking(false);
-    if (ok) {
-      setCloudCheckResult('success');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setHaMode('cloud');
-      }, 700);
-    } else {
-      setCloudCheckResult('error');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setCloudCheckResult('idle');
-      }, 900);
-    }
-  };
-
-  const handleCancelCloud = () => {
-    if (cloudChecking) return;
-    setCloudPromptVisible(false);
-  };
+  const {
+    promptVisible: cloudPromptVisible,
+    checking: cloudChecking,
+    result: cloudCheckResult,
+    openPrompt: handleToggleMode,
+    cancelPrompt: handleCancelCloud,
+    confirmPrompt: handleConfirmCloud,
+  } = useCloudModeSwitch({
+    isCloud,
+    onSwitchToCloud: () => setHaMode('cloud'),
+    onSwitchToHome: () => setHaMode('home'),
+  });
 
   useEffect(() => {
     if (isCloud && remoteAccess.status === 'locked') {

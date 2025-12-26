@@ -303,8 +303,6 @@ const CLOUD_CAPTURE_SCRIPT = `
   })();
 `;
 
-type StatusTone = 'info' | 'success' | 'error';
-
 export function RemoteAccessSetupScreen() {
   const navigation = useNavigation<any>();
   const { session, setSession, resetApp } = useSession();
@@ -350,26 +348,12 @@ export function RemoteAccessSetupScreen() {
   const [webviewVisible, setWebviewVisible] = useState<boolean>(false);
   const [webviewKey, setWebviewKey] = useState(0);
   const [cloudUrlInput, setCloudUrlInput] = useState(haConnection?.cloudUrl ?? '');
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<{ tone: StatusTone; message: string } | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [loginPromptVisible, setLoginPromptVisible] = useState(false);
   const [blockedUrl, setBlockedUrl] = useState<string | null>(null);
-  const [setupLoadFailed, setSetupLoadFailed] = useState(false);
-  const [debugEnabled, setDebugEnabled] = useState<boolean>(__DEV__);
-  const [debugLastUrl, setDebugLastUrl] = useState<string>('');
-  const [debugLastHostPath, setDebugLastHostPath] = useState<string>('');
-  const [debugLastBlocked, setDebugLastBlocked] = useState<string>('');
-  const [debugLastRedirectUri, setDebugLastRedirectUri] = useState<string>('');
-  const [debugLastRedirectHostPath, setDebugLastRedirectHostPath] = useState<string>('');
-  const [debugLastRewrite, setDebugLastRewrite] = useState<{ from: string; to: string } | null>(
-    null
-  );
-  const [debugAuthHost, setDebugAuthHost] = useState<string>('');
-  const [debugRedirectHost, setDebugRedirectHost] = useState<string>('');
+  const debugEnabled = __DEV__;
   const hasAutoSavedRef = useRef(false);
   const [lastProbeSuccess, setLastProbeSuccess] = useState(false);
-  const [captureSource, setCaptureSource] = useState<string | null>(null);
   const [hasSavedCloudUrl, setHasSavedCloudUrl] = useState(false);
   const [candidateCloudUrl, setCandidateCloudUrl] = useState<string | null>(null);
   const [cloudCheckStatus, setCloudCheckStatus] = useState<'idle' | 'checking' | 'green' | 'red'>(
@@ -377,7 +361,6 @@ export function RemoteAccessSetupScreen() {
   );
   const [cloudCheckLastError, setCloudCheckLastError] = useState<string | null>(null);
   const [saveCompleted, setSaveCompleted] = useState(false);
-  const [saveFailed, setSaveFailed] = useState(false);
   const [hasAcknowledgedLogin, setHasAcknowledgedLogin] = useState(false);
   const [allowReconnect, setAllowReconnect] = useState(false);
   const [showConnectSection, setShowConnectSection] = useState(false);
@@ -491,7 +474,6 @@ export function RemoteAccessSetupScreen() {
     ): Promise<{ ok: true; updated: typeof haConnection } | { ok: false; errorMessage: string }> => {
       if (!user || !haConnection) {
         const msg = 'You must be logged in as a homeowner to continue.';
-        setStatus({ tone: 'error', message: msg });
         return { ok: false, errorMessage: msg };
       }
 
@@ -500,9 +482,6 @@ export function RemoteAccessSetupScreen() {
         normalized = normalizeCloudUrl(value);
       } catch {
         const msg = 'Enter a valid remote access link like https://xxxxx.ui.nabu.casa';
-        if (source === 'manual') {
-          setStatus({ tone: 'error', message: msg });
-        }
         return { ok: false, errorMessage: msg };
       }
 
@@ -512,8 +491,6 @@ export function RemoteAccessSetupScreen() {
       }
 
       if (source === 'manual') {
-        setStatus(null);
-        setSaving(true);
         setSessionExpired(false);
       }
 
@@ -534,7 +511,6 @@ export function RemoteAccessSetupScreen() {
         hasAutoSavedRef.current = true;
         setHasSavedCloudUrl(true);
         setCloudUrlInput(updated.cloudUrl ?? normalized);
-        setCaptureSource(source);
 
         setLastProbeSuccess(true);
         return { ok: true, updated };
@@ -552,17 +528,7 @@ export function RemoteAccessSetupScreen() {
             haConnectionId: haConnection.id,
           });
         }
-        if (source === 'manual') {
-          setStatus({
-            tone: 'error',
-            message,
-          });
-        }
         return { ok: false, errorMessage: message };
-      } finally {
-        if (source === 'manual') {
-          setSaving(false);
-        }
       }
     },
     [cloudUrlInput, haConnection, normalizeCloudUrl, setSession, user]
@@ -571,24 +537,15 @@ export function RemoteAccessSetupScreen() {
   const handleSaveCloudUrl = async () => {
     const raw = cloudUrlInput.trim();
     if (!raw) {
-      setStatus({ tone: 'error', message: 'Enter a remote access link.' });
       return;
     }
     if (isMaskedCloudUrl(raw)) {
-      setStatus({
-        tone: 'error',
-        message: 'Remote URL is still hidden in Home Assistant. Reveal it there or wait for detection.',
-      });
       return;
     }
     let normalized: string;
     try {
       normalized = normalizeCloudUrl(raw);
     } catch {
-      setStatus({
-        tone: 'error',
-        message: 'Enter a valid remote access link like https://xxxxx.ui.nabu.casa',
-      });
       return;
     }
 
@@ -596,24 +553,9 @@ export function RemoteAccessSetupScreen() {
     const result = await saveCloudUrl(normalized, 'manual');
     if (!result.ok) {
       setSaveCompleted(false);
-      setSaveFailed(true);
-      setStatus({
-        tone: 'error',
-        message: result.errorMessage,
-      });
       return;
     }
-    setSaveFailed(false);
-    setStatus({
-      tone: 'success',
-      message: 'Remote access link saved to Dinodia. Verifying connectivity…',
-    });
   };
-
-  const defaultSetupBase = useMemo(
-    () => normalizeBase(baseUrl || DEFAULT_HA_SETUP_BASE_URL),
-    [baseUrl, normalizeBase]
-  );
 
   const handleDetectedUrl = useCallback(
     async (
@@ -623,10 +565,6 @@ export function RemoteAccessSetupScreen() {
       if (!hasAcknowledgedLogin) return;
       if (!url) return;
       if (isMaskedCloudUrl(url)) {
-        setStatus({
-          tone: 'error',
-          message: 'Remote URL is still hidden in Home Assistant. Waiting for the full link…',
-        });
         return;
       }
       try {
@@ -638,7 +576,6 @@ export function RemoteAccessSetupScreen() {
         setCloudUrlInput(normalized);
         setCloudCheckStatus('checking');
         setCloudCheckLastError(null);
-        setStatus({ tone: 'info', message: 'Testing remote access link…' });
       } catch {
         // ignore invalid detected values
       }
@@ -684,7 +621,6 @@ export function RemoteAccessSetupScreen() {
 
   const returnToCloud = useCallback(() => {
     setBlockedUrl(null);
-    setSetupLoadFailed(false);
     if (setupCloudAccountUrl) {
       navigateInWebView(setupCloudAccountUrl);
     } else {
@@ -707,52 +643,33 @@ export function RemoteAccessSetupScreen() {
           );
           if (parsed.host.endsWith('nabucasa.com')) {
             console.log(`${LOG_TAG}[NABU]`, `host=${parsed.host} path=${parsed.pathname}`);
-          }
-        } catch {
-          console.log(`${LOG_TAG}[NAV]`, 'unparseable url');
-        }
-        setDebugLastUrl(url);
-        try {
-          const parsed = new URL(url);
-          setDebugLastHostPath(`${parsed.host}${parsed.pathname}`);
-          if (parsed.host.endsWith('nabucasa.com')) {
             const params = new URLSearchParams(parsed.search);
             const ruRaw = params.get('redirect_uri');
             if (ruRaw) {
-              let decoded = '';
+              let decoded = ruRaw;
               try {
                 decoded = decodeURIComponent(ruRaw);
               } catch {
-                decoded = ruRaw;
+                // ignore decode errors
               }
-              setDebugLastRedirectUri(decoded);
               try {
                 const ruParsed = new URL(decoded);
-                setDebugLastRedirectHostPath(`${ruParsed.host}${ruParsed.pathname}`);
-                setDebugAuthHost(parsed.host);
-                setDebugRedirectHost(ruParsed.host);
                 console.log(`${LOG_TAG}[OAUTH]`, {
                   authHost: parsed.host,
                   redirectHostPath: `${ruParsed.host}${ruParsed.pathname}`,
                 });
               } catch {
-                setDebugLastRedirectHostPath('');
-                setDebugRedirectHost('');
+                // ignore parse errors
               }
-            } else {
-              setDebugLastRedirectUri('');
-              setDebugLastRedirectHostPath('');
-              setDebugRedirectHost('');
             }
           }
         } catch {
-          setDebugLastHostPath('');
+          console.log(`${LOG_TAG}[NAV]`, 'unparseable url');
         }
       }
       if (!isAllowedNavigation(url)) {
         setBlockedUrl(url);
         if (__DEV__) {
-          setDebugLastBlocked(url);
           console.log(`${LOG_TAG}[BLOCK]`, url);
         }
         returnToCloud();
@@ -785,12 +702,7 @@ export function RemoteAccessSetupScreen() {
       if (!rawUrl) return false;
 
       if (hasUnsafeAuthCreds(rawUrl)) {
-        setStatus({
-          tone: 'error',
-          message: 'Login automation encountered an unsafe URL; please close and retry.',
-        });
         if (__DEV__) {
-          setDebugLastBlocked(rawUrl);
           console.log(`${LOG_TAG}[BLOCK]`, rawUrl);
         }
         return false;
@@ -799,7 +711,6 @@ export function RemoteAccessSetupScreen() {
       const callbackRewrite = rewriteHaLocalToBase(rawUrl);
       if (callbackRewrite && callbackRewrite !== rawUrl) {
         if (__DEV__) {
-          setDebugLastRewrite({ from: rawUrl, to: callbackRewrite });
           console.log(`${LOG_TAG}[REWRITE]`, { from: rawUrl, to: callbackRewrite });
         }
         navigateInWebView(callbackRewrite);
@@ -809,7 +720,6 @@ export function RemoteAccessSetupScreen() {
       const authRewrite = rewriteNabuRedirectUri(rawUrl);
       if (authRewrite && authRewrite !== rawUrl) {
         if (__DEV__) {
-          setDebugLastRewrite({ from: rawUrl, to: authRewrite });
           console.log(`${LOG_TAG}[REWRITE]`, { from: rawUrl, to: authRewrite });
         }
         navigateInWebView(authRewrite);
@@ -820,7 +730,6 @@ export function RemoteAccessSetupScreen() {
       if (!ok) {
         setBlockedUrl(rawUrl);
         if (__DEV__) {
-          setDebugLastBlocked(rawUrl);
           console.log(`${LOG_TAG}[BLOCK]`, rawUrl);
         }
         returnToCloud();
@@ -857,7 +766,9 @@ export function RemoteAccessSetupScreen() {
   );
 
   const handleWebviewError = useCallback(() => {
-    setSetupLoadFailed(true);
+    if (__DEV__) {
+      console.log(`${LOG_TAG}[WEBVIEW_ERROR]`);
+    }
   }, []);
 
   const saveVerifiedCloudUrl = useCallback(async () => {
@@ -867,15 +778,8 @@ export function RemoteAccessSetupScreen() {
     const result = await saveCloudUrl(candidateCloudUrl, 'auto-api');
     if (!result.ok) {
       setSaveCompleted(false);
-      setSaveFailed(true);
       setCloudCheckStatus('red');
       setCloudCheckLastError(result.errorMessage);
-      setStatus({
-        tone: 'error',
-        message:
-          result.errorMessage ||
-          'Remote access works, but we could not save it to Dinodia. Please try again or contact support.',
-      });
       return;
     }
     const expected = candidateCloudUrl.replace(/\/+$/, '');
@@ -889,24 +793,13 @@ export function RemoteAccessSetupScreen() {
         });
       }
       setSaveCompleted(false);
-      setSaveFailed(true);
       setCloudCheckStatus('red');
       setCloudCheckLastError(
         'Remote access works, but we could not save it to Dinodia. Please try again or contact support.'
       );
-      setStatus({
-        tone: 'error',
-        message:
-          'Remote access works, but we could not save it to Dinodia. Please try again or contact support.',
-      });
       return;
     }
     setSaveCompleted(true);
-    setSaveFailed(false);
-    setStatus({
-      tone: 'success',
-      message: 'Saved and verified. Cloud mode enabled.',
-    });
     setWebviewVisible(false);
     setWebviewKey((k) => k + 1);
     if (typeof navigation?.canGoBack === 'function') {
@@ -1073,7 +966,6 @@ export function RemoteAccessSetupScreen() {
                     setCloudCheckLastError(null);
                     setCloudCheckStatus('checking');
                     setSaveCompleted(false);
-                    setSaveFailed(false);
                     hasAutoSavedRef.current = false;
                     setShowConnectSection(true);
                   }}

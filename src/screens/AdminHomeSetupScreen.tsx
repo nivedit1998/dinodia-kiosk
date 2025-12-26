@@ -19,10 +19,10 @@ import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { HeaderMenu } from '../components/HeaderMenu';
 import { TopBar } from '../components/ui/TopBar';
-import { checkRemoteAccessEnabled } from '../api/remoteAccess';
 import { maxContentWidth, palette, radii, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 
 type SellingMode = 'FULL_RESET' | 'OWNER_TRANSFER';
 
@@ -45,9 +45,6 @@ export function AdminHomeSetupScreen() {
   const [tenantAreas, setTenantAreas] = useState<string[]>([]);
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantMsg, setTenantMsg] = useState<string | null>(null);
-  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
-  const [cloudChecking, setCloudChecking] = useState(false);
-  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
 
   const [sellingMode, setSellingMode] = useState<SellingMode | null>(null);
   const [sellingLoading, setSellingLoading] = useState(false);
@@ -135,45 +132,18 @@ export function AdminHomeSetupScreen() {
     }
   }, [isCloud, remoteAccess.status, setHaMode]);
 
-  const handleToggleMode = () => {
-    if (isCloud) {
-      setHaMode('home');
-      return;
-    }
-    setCloudCheckResult('idle');
-    setCloudPromptVisible(true);
-  };
-
-  const handleConfirmCloud = async () => {
-    if (cloudChecking) return;
-    setCloudChecking(true);
-    setCloudCheckResult('checking');
-    let ok = false;
-    try {
-      ok = await checkRemoteAccessEnabled();
-    } catch {
-      // ignore, fallback to cloud locked screen
-    }
-    setCloudChecking(false);
-    if (ok) {
-      setCloudCheckResult('success');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setHaMode('cloud');
-      }, 700);
-    } else {
-      setCloudCheckResult('error');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setCloudCheckResult('idle');
-      }, 900);
-    }
-  };
-
-  const handleCancelCloud = () => {
-    if (cloudChecking) return;
-    setCloudPromptVisible(false);
-  };
+  const {
+    promptVisible: cloudPromptVisible,
+    checking: cloudChecking,
+    result: cloudCheckResult,
+    openPrompt: handleToggleMode,
+    cancelPrompt: handleCancelCloud,
+    confirmPrompt: handleConfirmCloud,
+  } = useCloudModeSwitch({
+    isCloud,
+    onSwitchToCloud: () => setHaMode('cloud'),
+    onSwitchToHome: () => setHaMode('home'),
+  });
 
   const handleOpenWifiSetup = () => {
     if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {

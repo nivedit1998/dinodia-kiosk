@@ -23,8 +23,8 @@ import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
 import { logoutRemote } from '../../api/auth';
 import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
-import { checkRemoteAccessEnabled } from '../../api/remoteAccess';
 import { CloudModePrompt } from '../../components/CloudModePrompt';
+import { useCloudModeSwitch } from '../../hooks/useCloudModeSwitch';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 
@@ -38,9 +38,6 @@ export function AutomationsListScreen({}: Props) {
   const [error, setError] = useState<string | null>(null);
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [menuVisible, setMenuVisible] = useState(false);
-  const [cloudPromptVisible, setCloudPromptVisible] = useState(false);
-  const [cloudChecking, setCloudChecking] = useState(false);
-  const [cloudCheckResult, setCloudCheckResult] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const userId = session.user?.id;
   const isAdmin = session.user?.role === 'ADMIN';
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
@@ -111,45 +108,18 @@ export function AutomationsListScreen({}: Props) {
     [setHaMode, userId]
   );
 
-  const handleToggleMode = useCallback(() => {
-    if (isCloud) {
-      void switchMode('home');
-      return;
-    }
-    setCloudCheckResult('idle');
-    setCloudPromptVisible(true);
-  }, [isCloud, switchMode]);
-
-  const handleConfirmCloud = useCallback(async () => {
-    if (cloudChecking) return;
-    setCloudChecking(true);
-    setCloudCheckResult('checking');
-    let ok = false;
-    try {
-      ok = await checkRemoteAccessEnabled();
-    } catch {
-      // ignore, fallback to cloud locked screen
-    }
-    setCloudChecking(false);
-    if (ok) {
-      setCloudCheckResult('success');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        void switchMode('cloud');
-      }, 700);
-    } else {
-      setCloudCheckResult('error');
-      setTimeout(() => {
-        setCloudPromptVisible(false);
-        setCloudCheckResult('idle');
-      }, 900);
-    }
-  }, [cloudChecking, switchMode]);
-
-  const handleCancelCloud = useCallback(() => {
-    if (cloudChecking) return;
-    setCloudPromptVisible(false);
-  }, [cloudChecking]);
+  const {
+    promptVisible: cloudPromptVisible,
+    checking: cloudChecking,
+    result: cloudCheckResult,
+    openPrompt: handleToggleMode,
+    cancelPrompt: handleCancelCloud,
+    confirmPrompt: handleConfirmCloud,
+  } = useCloudModeSwitch({
+    isCloud,
+    onSwitchToCloud: () => switchMode('cloud'),
+    onSwitchToHome: () => switchMode('home'),
+  });
 
   const handleOpenWifiSetup = useCallback(() => {
     if (InlineWifiSetupLauncher && typeof InlineWifiSetupLauncher.open === 'function') {
