@@ -627,6 +627,11 @@ export function SpotifyCard({ compact }: SpotifyCardProps) {
               source={{ uri: authUrl }}
               onNavigationStateChange={handleAuthNavigation}
               startInLoadingState
+              incognito
+              cacheEnabled={false}
+              sharedCookiesEnabled={false}
+              thirdPartyCookiesEnabled={false}
+              domStorageEnabled
               style={styles.authWebView}
             />
           ) : null}

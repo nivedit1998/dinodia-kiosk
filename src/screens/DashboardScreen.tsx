@@ -16,7 +16,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { UIDevice } from '../models/device';
 import { normalizeLabel } from '../utils/deviceLabels';
 import { isDetailDevice, isSensorDevice } from '../utils/deviceKinds';
-import { logoutRemote } from '../api/auth';
 import { DeviceCard } from '../components/DeviceCard';
 import type { DeviceCardSize } from '../components/DeviceCard';
 import { DeviceDetail } from '../components/DeviceDetail';
@@ -55,7 +54,7 @@ type DashboardContentProps = {
   userId: number;
   role: Role;
   haMode: HaMode;
-  clearSession: () => Promise<void>;
+  resetApp: () => Promise<void>;
   setHaMode: (mode: HaMode) => void;
   haConnection: HaConnection | null;
 };
@@ -64,7 +63,7 @@ function DashboardContent({
   userId,
   role,
   haMode,
-  clearSession,
+  resetApp,
   setHaMode,
   haConnection,
 }: DashboardContentProps) {
@@ -91,9 +90,8 @@ function DashboardContent({
     if (loggingOut) return;
     setLoggingOut(true);
     try {
-      await logoutRemote().catch(() => undefined);
+      await resetApp();
     } finally {
-      await clearSession();
       setLoggingOut(false);
     }
   };
@@ -486,7 +484,7 @@ type DashboardScreenProps = {
 };
 
 export function DashboardScreen({ role }: DashboardScreenProps) {
-  const { session, clearSession, haMode, setHaMode } = useSession();
+  const { session, resetApp, haMode, setHaMode } = useSession();
   const userId = session.user?.id!;
   const key = `${userId}_${haMode}_${role}`;
 
@@ -496,7 +494,7 @@ export function DashboardScreen({ role }: DashboardScreenProps) {
       userId={userId}
       role={role}
       haMode={haMode}
-      clearSession={clearSession}
+      resetApp={resetApp}
       setHaMode={setHaMode}
       haConnection={session.haConnection}
     />

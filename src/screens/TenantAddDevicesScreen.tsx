@@ -40,7 +40,6 @@ import { TextField } from '../components/ui/TextField';
 import { TopBar } from '../components/ui/TopBar';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
-import { logoutRemote } from '../api/auth';
 import { useSession } from '../store/sessionStore';
 import { palette, radii, shadows, spacing, typography, maxContentWidth } from '../ui/theme';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
@@ -142,7 +141,7 @@ function SimpleButton({ title, onPress, variant = 'default', disabled, style }: 
 
 export function TenantAddDevicesScreen() {
   const navigation = useNavigation<any>();
-  const { session, haMode, setHaMode, clearSession } = useSession();
+  const { session, haMode, setHaMode, resetApp } = useSession();
   const userId = session.user?.id ?? null;
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
@@ -548,8 +547,7 @@ export function TenantAddDevicesScreen() {
   };
 
   const handleLogout = async () => {
-    await logoutRemote().catch(() => undefined);
-    await clearSession();
+    await resetApp();
   };
 
   const {

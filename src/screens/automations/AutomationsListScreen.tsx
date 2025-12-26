@@ -22,7 +22,6 @@ import { TopBar } from '../../components/ui/TopBar';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
-import { logoutRemote } from '../../api/auth';
 import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
 import { CloudModePrompt } from '../../components/CloudModePrompt';
@@ -38,7 +37,7 @@ type Props = NativeStackScreenProps<any>;
 
 export function AutomationsListScreen({}: Props) {
   const navigation = useNavigation<any>();
-  const { session, haMode, setHaMode, clearSession } = useSession();
+  const { session, haMode, setHaMode, resetApp } = useSession();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -140,9 +139,8 @@ export function AutomationsListScreen({}: Props) {
   }, []);
 
   const handleLogout = useCallback(async () => {
-    await logoutRemote().catch(() => undefined);
-    await clearSession();
-  }, [clearSession]);
+    await resetApp();
+  }, [resetApp]);
 
   useEffect(() => {
     if (isCloud && remoteAccess.status === 'locked') {

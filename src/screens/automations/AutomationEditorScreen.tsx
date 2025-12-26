@@ -35,7 +35,6 @@ import { TextField } from '../../components/ui/TextField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { HeaderMenu } from '../../components/HeaderMenu';
 import { clearDeviceCacheForUserAndMode } from '../../store/deviceStore';
-import { logoutRemote } from '../../api/auth';
 import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
 import { useCloudModeSwitch } from '../../hooks/useCloudModeSwitch';
@@ -53,7 +52,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   const initialDescription = route.params?.description as string | undefined;
   const initialDraft = route.params?.draft as AutomationDraft | undefined;
   const isEditing = Boolean(automationId);
-  const { session, haMode, setHaMode, clearSession } = useSession();
+  const { session, haMode, setHaMode, resetApp } = useSession();
   const userId = session.user?.id!;
   const { devices, refreshing } = useDevices(userId, haMode);
   const { width } = useWindowDimensions();
@@ -251,8 +250,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
   };
 
   const handleLogout = async () => {
-    await logoutRemote().catch(() => undefined);
-    await clearSession();
+    await resetApp();
   };
 
   useEffect(() => {

@@ -74,6 +74,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await clearTokens().catch(() => undefined);
       await removeKey(SPOTIFY_EPHEMERAL_KEY).catch(() => undefined);
       await CookieManager.clearAll(true).catch(() => undefined);
+      if (CookieManager.flush) {
+        await CookieManager.flush().catch(() => undefined);
+      }
       await removeKey(SESSION_KEY).catch(() => undefined);
     } finally {
       setSessionState({ user: null, haConnection: null });

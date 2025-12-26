@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { View, Text, StyleSheet, Alert, ScrollView, SafeAreaView } from 'react-native';
 import { useSession } from '../store/sessionStore';
-import { changePassword, logoutRemote } from '../api/auth';
+import { changePassword } from '../api/auth';
 import { updateHaSettings } from '../api/dinodia';
 import { palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
@@ -11,7 +11,7 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 
 export function AdminSettingsScreen() {
   const navigation = useNavigation<any>();
-  const { session, clearSession, setSession } = useSession();
+  const { session, setSession, resetApp } = useSession();
   const user = session.user!;
   const haInitial = session.haConnection;
 
@@ -70,8 +70,7 @@ export function AdminSettingsScreen() {
   }
 
   async function onLogout() {
-    await logoutRemote();
-    await clearSession();
+    await resetApp();
   }
 
   return (

@@ -1136,10 +1136,10 @@ export function RemoteAccessSetupScreen() {
               onError={handleWebviewError}
               onHttpError={handleWebviewError}
               incognito
-              sharedCookiesEnabled
-              thirdPartyCookiesEnabled
+              sharedCookiesEnabled={false}
+              thirdPartyCookiesEnabled={false}
               domStorageEnabled
-              cacheEnabled
+              cacheEnabled={false}
               startInLoadingState
               javaScriptEnabled
               ref={webViewRef}

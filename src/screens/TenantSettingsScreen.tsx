@@ -2,13 +2,13 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Alert, ScrollView, SafeAreaView } from 'react-native';
 import { useSession } from '../store/sessionStore';
-import { changePassword, logoutRemote } from '../api/auth';
+import { changePassword } from '../api/auth';
 import { palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
 export function TenantSettingsScreen() {
-  const { session, clearSession } = useSession();
+  const { session, resetApp } = useSession();
   const user = session.user!;
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -36,8 +36,7 @@ export function TenantSettingsScreen() {
   }
 
   async function onLogout() {
-    await logoutRemote();
-    await clearSession();
+    await resetApp();
   }
 
   return (
