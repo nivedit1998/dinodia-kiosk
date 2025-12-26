@@ -17,6 +17,16 @@ export type AutomationSummary = {
   entities?: string[];
   hasTemplates?: boolean;
   canEdit?: boolean;
+  mode?: string;
+  raw?: {
+    triggers?: unknown[];
+    trigger?: unknown[];
+    actions?: unknown[];
+    action?: unknown[];
+    conditions?: unknown[];
+    condition?: unknown[];
+    [key: string]: unknown;
+  };
 };
 
 type PlatformOpts = { haConnection?: HaConnection | null; mode?: HaMode };
@@ -288,6 +298,7 @@ async function maybeListAutomationsViaHa(ha: HaConn): Promise<AutomationSummary[
         description: s.attributes?.description ?? '',
         enabled: String(s.state || '').toLowerCase() !== 'off',
         entities: [],
+        mode: s.attributes?.mode ?? 'single',
       }));
   } catch {
     return [];
@@ -332,6 +343,8 @@ async function enrichAutomationsWithHaDetails(list: AutomationSummary[], ha: HaC
         entities,
         hasTemplates: templates,
         canEdit: !templates,
+        mode: config.mode ?? item.mode ?? 'single',
+        raw: config,
       };
     })
   );
