@@ -176,10 +176,11 @@ export function useDevices(userId: number, mode: HaMode) {
       await refreshDevices({ background: true });
     })();
 
+    const intervalMs = mode === 'home' ? 1000 : 8000;
     const interval = setInterval(() => {
       if (appStateRef.current !== 'active') return;
       void refreshDevices({ background: true });
-    }, 12000);
+    }, intervalMs);
 
     return () => {
       cancelled = true;

@@ -192,7 +192,7 @@ export function AutomationsListScreen({}: Props) {
             <PrimaryButton
               title="+ Add"
               onPress={() => navigation.navigate('AutomationEditor' as never)}
-              style={{ paddingHorizontal: spacing.xl }}
+              style={styles.addButton}
             />
           </View>
 
@@ -211,40 +211,51 @@ export function AutomationsListScreen({}: Props) {
               data={automations}
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-              renderItem={({ item }) => (
-                <View style={styles.item}>
-                  <View style={{ flex: 1, gap: spacing.xs }}>
-                    <Text style={styles.itemTitle}>{item.alias}</Text>
-                    {item.description ? <Text style={styles.itemSubtitle}>{item.description}</Text> : null}
-                    <View style={styles.summaryGroup}>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Basic</Text>
-                        <Text style={styles.summaryText}>{item.basicSummary || item.description || 'No summary from Home Assistant yet.'}</Text>
+              renderItem={({ item }) => {
+                const summary =
+                  item.description || item.basicSummary || 'No summary from Home Assistant yet.';
+                const trigger = item.triggerSummary || 'Trigger info not available.';
+                const action = item.actionSummary || 'Action info not available.';
+                return (
+                  <View style={styles.item}>
+                    <View style={styles.itemMain}>
+                      <Text style={styles.itemTitle}>{item.alias}</Text>
+                      <Text style={styles.itemSubtitle} numberOfLines={2}>
+                        {summary}
+                      </Text>
+                      <View style={styles.metaRow}>
+                        <Text style={styles.metaLabel}>When</Text>
+                        <Text style={styles.metaText} numberOfLines={2}>
+                          {trigger}
+                        </Text>
                       </View>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Trigger</Text>
-                        <Text style={styles.summaryText}>{item.triggerSummary || 'Trigger info not available.'}</Text>
-                      </View>
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Action</Text>
-                        <Text style={styles.summaryText}>{item.actionSummary || 'Action info not available.'}</Text>
+                      <View style={styles.metaRow}>
+                        <Text style={styles.metaLabel}>Then</Text>
+                        <Text style={styles.metaText} numberOfLines={2}>
+                          {action}
+                        </Text>
                       </View>
                     </View>
+                    <View style={styles.itemActions}>
+                      <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
+                        <Text style={styles.deleteText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View style={styles.itemActions}>
-                    <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
-                      <Text style={styles.deleteText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
+                );
+              }}
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Text style={styles.emptyText}>No automations yet.</Text>
                   <Text style={styles.emptySub}>Create your first automation to get started.</Text>
                 </View>
               }
-              contentContainerStyle={{ paddingBottom: spacing.xxl }}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+              contentContainerStyle={[
+                styles.listContent,
+                automations.length === 0 ? styles.listContentEmpty : null,
+              ]}
+              style={styles.listCard}
             />
           )}
         </View>
@@ -285,10 +296,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: spacing.md,
+    flexWrap: 'wrap',
     marginBottom: spacing.lg,
   },
   title: { ...typography.heading },
-  subtitle: { color: palette.textMuted, marginTop: 4 },
+  subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 13 },
+  addButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   loadingText: { color: palette.textMuted },
   errorBox: {
@@ -299,42 +313,44 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
   },
   errorText: { color: palette.danger, marginBottom: spacing.sm },
-  item: {
+  listCard: {
     backgroundColor: palette.surface,
-    padding: spacing.lg,
-    borderRadius: radii.lg,
-    marginBottom: spacing.sm,
+    borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: palette.outline,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
     ...shadows.soft,
   },
-  itemTitle: { fontSize: 16, fontWeight: '700', color: palette.text },
-  itemSubtitle: { fontSize: 13, color: palette.textMuted, marginTop: 2 },
-  itemStatus: { fontSize: 12, color: palette.textMuted, marginTop: 6 },
-  itemActions: { gap: spacing.sm, alignItems: 'flex-end' },
+  listContent: { paddingVertical: spacing.xs, paddingBottom: spacing.xxl },
+  listContentEmpty: { paddingVertical: spacing.xl },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: palette.outline,
+    marginHorizontal: spacing.lg,
+  },
+  item: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  itemMain: { flex: 1, gap: spacing.xs },
+  itemTitle: { fontSize: 16, fontWeight: '600', color: palette.text },
+  itemSubtitle: { fontSize: 13, color: palette.textMuted },
+  metaRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
+  metaLabel: { width: 46, fontSize: 11, fontWeight: '700', color: palette.textMuted },
+  metaText: { flex: 1, fontSize: 12, color: palette.text },
+  itemActions: { alignItems: 'flex-end', paddingTop: 2 },
   deleteButton: {
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radii.pill,
-    backgroundColor: '#ffe8e8',
-  },
-  deleteText: { color: palette.danger, fontWeight: '700' },
-  empty: { paddingVertical: 40, alignItems: 'center' },
-  emptyText: { color: palette.text, fontSize: 16, fontWeight: '700' },
-  emptySub: { color: palette.textMuted, marginTop: 4 },
-  summaryGroup: {
-    padding: spacing.sm,
-    borderRadius: radii.md,
-    backgroundColor: palette.background,
     borderWidth: 1,
-    borderColor: palette.outline,
-    gap: spacing.xs,
-    marginTop: spacing.xs,
+    borderColor: '#fecaca',
+    backgroundColor: '#fff1f2',
   },
-  summaryRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
-  summaryLabel: { width: 70, fontSize: 12, color: palette.textMuted, fontWeight: '700' },
-  summaryText: { flex: 1, fontSize: 12, color: palette.text },
+  deleteText: { color: palette.danger, fontWeight: '600', fontSize: 12 },
+  empty: { paddingVertical: 40, alignItems: 'center', gap: spacing.xs },
+  emptyText: { color: palette.text, fontSize: 16, fontWeight: '700' },
+  emptySub: { color: palette.textMuted },
 });

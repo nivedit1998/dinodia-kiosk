@@ -9,6 +9,9 @@ import {
   SafeAreaView,
   useWindowDimensions,
   NativeModules,
+  FlatList,
+  Modal,
+  Pressable,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -91,6 +94,14 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     initialDraft?.triggers?.[0] ?? null
   );
   const [prefillApplied, setPrefillApplied] = useState(false);
+  const dropdownOpen = showHourDropdown || showMinuteDropdown;
+  const activeDropdown = showHourDropdown ? 'hour' : showMinuteDropdown ? 'minute' : null;
+  const dropdownData = activeDropdown === 'hour' ? HOURS : MINUTES;
+
+  const closeDropdowns = () => {
+    setShowHourDropdown(false);
+    setShowMinuteDropdown(false);
+  };
 
   useEffect(() => {
     if (!isEditing || !initialDraft || prefillApplied) return;
@@ -352,7 +363,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
           }
         }}
       />
-      <ScrollView contentContainerStyle={[styles.container, isWide && styles.containerWide]}>
+      <ScrollView contentContainerStyle={[styles.container, isWide && styles.containerWide]} nestedScrollEnabled>
         <View style={styles.headerBlock}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{isEditing ? 'Edit Automation' : 'Create Automation'}</Text>
@@ -382,7 +393,7 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
         </View>
 
         <View style={[styles.sectionRow, isWide && styles.sectionRowWide]}>
-          <View style={[styles.sectionCard, styles.sectionHalf]}>
+          <View style={[styles.sectionCard, styles.sectionHalf, styles.triggerCard]}>
             <Text style={styles.sectionTitle}>Trigger</Text>
             <View style={styles.field}>
               <Text style={styles.label}>Time</Text>
@@ -432,22 +443,6 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
                     >
                       <Text style={[styles.dropdownHeaderText, anyTime && styles.disabledText]}>{timeHour ?? 'HH'}</Text>
                     </TouchableOpacity>
-                    {showHourDropdown && (
-                      <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
-                        {HOURS.map((h) => (
-                          <TouchableOpacity
-                            key={h}
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setTimeHour(h);
-                              setShowHourDropdown(false);
-                            }}
-                          >
-                            <Text style={styles.dropdownItemText}>{h}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    )}
                   </View>
                   <Text style={[styles.timeDivider, anyTime && styles.disabledText]}>:</Text>
                   <View style={[styles.dropdown, anyTime && styles.dropdownDisabled]}>
@@ -461,22 +456,6 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
                     >
                       <Text style={[styles.dropdownHeaderText, anyTime && styles.disabledText]}>{timeMinute ?? 'MM'}</Text>
                     </TouchableOpacity>
-                    {showMinuteDropdown && (
-                      <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
-                        {MINUTES.map((m) => (
-                          <TouchableOpacity
-                            key={m}
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setTimeMinute(m);
-                              setShowMinuteDropdown(false);
-                            }}
-                          >
-                            <Text style={styles.dropdownItemText}>{m}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    )}
                   </View>
                   <TouchableOpacity
                     style={[styles.anyTimeButton, anyTime && styles.anyTimeButtonActive]}
@@ -662,6 +641,40 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
           style={{ marginTop: spacing.md }}
         />
       </ScrollView>
+      <Modal transparent visible={dropdownOpen} animationType="fade" onRequestClose={closeDropdowns}>
+        <Pressable style={styles.dropdownBackdrop} onPress={closeDropdowns}>
+          <View />
+        </Pressable>
+        <View style={styles.dropdownModalWrap} pointerEvents="box-none">
+          <View style={styles.dropdownModalCard}>
+            <Text style={styles.dropdownModalTitle}>
+              {activeDropdown === 'hour' ? 'Select hour' : 'Select minute'}
+            </Text>
+            <FlatList
+              data={dropdownData}
+              keyExtractor={(item) => item}
+              style={styles.dropdownList}
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    if (activeDropdown === 'hour') {
+                      setTimeHour(item);
+                    } else {
+                      setTimeMinute(item);
+                    }
+                    closeDropdowns();
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>{item}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
       <HeaderMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -770,14 +783,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   title: { ...typography.heading },
-  subtitle: { color: palette.textMuted },
+  subtitle: { color: palette.textMuted, fontSize: 13 },
   surface: {
     backgroundColor: palette.surface,
     padding: spacing.xl,
     borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: palette.outline,
-    ...shadows.soft,
     width: '100%',
     maxWidth: maxContentWidth,
   },
@@ -786,6 +798,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     width: '100%',
     maxWidth: maxContentWidth,
+    overflow: 'visible',
   },
   sectionRowWide: {
     flexDirection: 'row',
@@ -797,66 +810,60 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     borderWidth: 1,
     borderColor: palette.outline,
-    ...shadows.soft,
     flex: 1,
+    overflow: 'visible',
   },
+  triggerCard: { zIndex: 50 },
   sectionHalf: { minWidth: 0 },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: palette.text, marginBottom: spacing.sm },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.text, marginBottom: spacing.sm },
   field: { marginBottom: spacing.md },
-  label: { fontSize: 14, fontWeight: '700', color: palette.text, marginBottom: 6 },
+  label: { fontSize: 12, fontWeight: '600', color: palette.textMuted, marginBottom: 6 },
   chip: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: palette.outline,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
     marginRight: 8,
   },
-  chipSelected: { backgroundColor: palette.text, borderColor: palette.text },
-  chipText: { color: palette.text, fontWeight: '700' },
-  chipTextSelected: { color: '#fff' },
-  helper: { color: palette.textMuted, fontSize: 13 },
+  chipSelected: { backgroundColor: 'rgba(10,132,255,0.12)', borderColor: palette.primary },
+  chipText: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
+  chipTextSelected: { color: palette.primary },
+  helper: { color: palette.textMuted, fontSize: 12 },
   rowItem: {
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: palette.outline,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
     marginBottom: 8,
   },
-  rowItemSelected: { borderColor: palette.primary, backgroundColor: palette.primary },
-  rowItemText: { color: palette.text, fontWeight: '700' },
-  rowItemTextSelected: { color: '#fff' },
+  rowItemSelected: { borderColor: palette.primary, backgroundColor: 'rgba(10,132,255,0.12)' },
+  rowItemText: { color: palette.text, fontWeight: '600' },
+  rowItemTextSelected: { color: palette.primary },
   dropdownRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  dropdown: { minWidth: 80, position: 'relative' },
+  dropdown: { minWidth: 80, position: 'relative', zIndex: 30 },
   dropdownHeader: {
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: palette.outline,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
   },
-  dropdownHeaderText: { color: palette.text, fontWeight: '700' },
+  dropdownHeaderText: { color: palette.text, fontWeight: '600' },
   dropdownList: {
-    maxHeight: 200,
-    borderWidth: 1,
-    borderColor: palette.outline,
-    borderRadius: radii.lg,
-    backgroundColor: palette.surface,
-    position: 'absolute',
-    top: 48,
-    left: 0,
-    right: 0,
-    zIndex: 10,
+    maxHeight: 280,
   },
+  dropdownContent: { paddingVertical: spacing.xs, backgroundColor: palette.surface },
   dropdownItem: {
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: palette.outline,
+    backgroundColor: palette.surface,
   },
   dropdownItemText: { color: palette.text, fontSize: 14 },
   timeDivider: { marginHorizontal: 6, fontWeight: '700', color: palette.text },
@@ -866,30 +873,62 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: palette.outline,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
   },
-  anyTimeButtonActive: { backgroundColor: '#111', borderColor: '#111' },
-  anyTimeText: { color: palette.text, fontWeight: '700' },
-  anyTimeTextActive: { color: '#fff' },
+  anyTimeButtonActive: { backgroundColor: 'rgba(10,132,255,0.12)', borderColor: palette.primary },
+  anyTimeText: { color: palette.textMuted, fontWeight: '600' },
+  anyTimeTextActive: { color: palette.primary },
   timeBlock: {
     marginTop: spacing.xs,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: palette.outline,
     borderRadius: radii.md,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
+    overflow: 'visible',
   },
   subLabel: { fontSize: 12, color: palette.textMuted, marginBottom: 4 },
   dropdownDisabled: { opacity: 0.7 },
   disabledText: { color: palette.textMuted },
   timeRow: { flexWrap: 'nowrap', gap: spacing.sm },
+  dropdownBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.35)',
+  },
+  dropdownModalWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  dropdownModalCard: {
+    width: 220,
+    maxHeight: 360,
+    backgroundColor: palette.surface,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    ...shadows.medium,
+    paddingVertical: spacing.sm,
+  },
+  dropdownModalTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
   closeButton: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: palette.outline,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
   },
-  closeButtonText: { color: palette.text, fontWeight: '700' },
+  closeButtonText: { color: palette.textMuted, fontWeight: '600', fontSize: 12 },
 });
