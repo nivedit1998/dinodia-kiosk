@@ -25,6 +25,7 @@ import { useRemoteAccessStatus } from '../../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../../hooks/useDeviceStatus';
 import { CloudModePrompt } from '../../components/CloudModePrompt';
 import { useCloudModeSwitch } from '../../hooks/useCloudModeSwitch';
+import { useDevices } from '../../store/deviceStore';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 
@@ -45,6 +46,8 @@ export function AutomationsListScreen({}: Props) {
   const isCloud = haMode === 'cloud';
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
+  const { devices, refreshing: devicesRefreshing } = useDevices(userId || 0, haMode);
+  const [selectedEntityId, setSelectedEntityId] = useState<string>('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -140,6 +143,10 @@ export function AutomationsListScreen({}: Props) {
     }
   }, [isCloud, remoteAccess.status, switchMode]);
 
+  const filteredAutomations = selectedEntityId
+    ? automations.filter((a) => (a.entities ?? []).includes(selectedEntityId))
+    : automations;
+
   return (
     <SafeAreaView style={styles.container}>
       <TopBar
@@ -196,6 +203,45 @@ export function AutomationsListScreen({}: Props) {
             />
           </View>
 
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Device / Entity</Text>
+            <View style={styles.filterChips}>
+              <TouchableOpacity
+                style={[styles.filterChip, selectedEntityId === '' && styles.filterChipSelected]}
+                onPress={() => setSelectedEntityId('')}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedEntityId === '' && styles.filterChipTextSelected,
+                  ]}
+                >
+                  All automations
+                </Text>
+              </TouchableOpacity>
+              {devices.map((d) => {
+                const selected = selectedEntityId === d.entityId;
+                return (
+                  <TouchableOpacity
+                    key={d.entityId}
+                    style={[styles.filterChip, selected && styles.filterChipSelected]}
+                    onPress={() => setSelectedEntityId(d.entityId)}
+                    disabled={devicesRefreshing}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selected && styles.filterChipTextSelected,
+                      ]}
+                    >
+                      {d.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
           {loading ? (
             <View style={styles.loading}>
               <ActivityIndicator size="large" color={palette.primary} />
@@ -208,7 +254,7 @@ export function AutomationsListScreen({}: Props) {
             </View>
           ) : (
             <FlatList
-              data={automations}
+              data={filteredAutomations}
               keyExtractor={(item) => item.id}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
               renderItem={({ item }) => {
@@ -218,24 +264,45 @@ export function AutomationsListScreen({}: Props) {
                 const action = item.actionSummary || 'Action info not available.';
                 return (
                   <View style={styles.item}>
-                    <View style={styles.itemMain}>
+                    <View style={styles.itemHeader}>
                       <Text style={styles.itemTitle}>{item.alias}</Text>
-                      <Text style={styles.itemSubtitle} numberOfLines={2}>
-                        {summary}
-                      </Text>
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>When</Text>
-                        <Text style={styles.metaText} numberOfLines={2}>
-                          {trigger}
+                      <View style={styles.badges}>
+                        <Text
+                          style={[
+                            styles.badge,
+                            item.enabled ? styles.badgeEnabled : styles.badgeDisabled,
+                          ]}
+                        >
+                          {item.enabled ? 'Enabled' : 'Disabled'}
                         </Text>
-                      </View>
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Then</Text>
-                        <Text style={styles.metaText} numberOfLines={2}>
-                          {action}
-                        </Text>
+                        {item.hasTemplates && (
+                          <Text style={[styles.badge, styles.badgeWarning]}>Template (view only)</Text>
+                        )}
+                        {item.canEdit === false && (
+                          <Text style={[styles.badge, styles.badgeWarning]}>Read-only</Text>
+                        )}
                       </View>
                     </View>
+                    <Text style={styles.itemSubtitle} numberOfLines={2}>
+                      {summary}
+                    </Text>
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaLabel}>When</Text>
+                      <Text style={styles.metaText} numberOfLines={2}>
+                        {trigger}
+                      </Text>
+                    </View>
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaLabel}>Then</Text>
+                      <Text style={styles.metaText} numberOfLines={2}>
+                        {action}
+                      </Text>
+                    </View>
+                    {item.entities && item.entities.length > 0 && (
+                      <Text style={styles.metaChips} numberOfLines={2}>
+                        Entities: {item.entities.join(', ')}
+                      </Text>
+                    )}
                     <View style={styles.itemActions}>
                       <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
                         <Text style={styles.deleteText}>Delete</Text>
@@ -253,7 +320,7 @@ export function AutomationsListScreen({}: Props) {
               ItemSeparatorComponent={() => <View style={styles.separator} />}
               contentContainerStyle={[
                 styles.listContent,
-                automations.length === 0 ? styles.listContentEmpty : null,
+                filteredAutomations.length === 0 ? styles.listContentEmpty : null,
               ]}
               style={styles.listCard}
             />
@@ -303,6 +370,23 @@ const styles = StyleSheet.create({
   title: { ...typography.heading },
   subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 13 },
   addButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  filterRow: { marginTop: spacing.sm, gap: spacing.xs },
+  filterLabel: { fontSize: 12, fontWeight: '700', color: palette.textMuted },
+  filterChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  filterChip: {
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    backgroundColor: palette.surface,
+  },
+  filterChipSelected: {
+    borderColor: palette.primary,
+    backgroundColor: 'rgba(10,132,255,0.08)',
+  },
+  filterChipText: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
+  filterChipTextSelected: { color: palette.primary },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   loadingText: { color: palette.textMuted },
   errorBox: {
@@ -330,9 +414,7 @@ const styles = StyleSheet.create({
   item: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   itemMain: { flex: 1, gap: spacing.xs },
   itemTitle: { fontSize: 16, fontWeight: '600', color: palette.text },
@@ -340,6 +422,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   metaLabel: { width: 46, fontSize: 11, fontWeight: '700', color: palette.textMuted },
   metaText: { flex: 1, fontSize: 12, color: palette.text },
+  metaChips: { fontSize: 12, color: palette.textMuted },
   itemActions: { alignItems: 'flex-end', paddingTop: 2 },
   deleteButton: {
     paddingHorizontal: spacing.sm,
@@ -353,4 +436,17 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: 40, alignItems: 'center', gap: spacing.xs },
   emptyText: { color: palette.text, fontSize: 16, fontWeight: '700' },
   emptySub: { color: palette.textMuted },
+  itemHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  badge: {
+    fontSize: 11,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  badgeEnabled: { backgroundColor: '#ecfdf3', borderColor: '#bbf7d0', color: '#15803d' },
+  badgeDisabled: { backgroundColor: '#f8fafc', borderColor: palette.outline, color: palette.textMuted },
+  badgeWarning: { backgroundColor: '#fffbeb', borderColor: '#fcd34d', color: '#92400e' },
 });

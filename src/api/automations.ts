@@ -14,128 +14,21 @@ export type AutomationSummary = {
   actionSummary?: string;
   hasDeviceAction?: boolean;
   draft?: AutomationDraft | null;
+  entities?: string[];
+  hasTemplates?: boolean;
+  canEdit?: boolean;
 };
 
 type PlatformOpts = { haConnection?: HaConnection | null; mode?: HaMode };
 
-function throwIfPlatformError(payload: any) {
-  if (!payload || typeof payload !== 'object') return;
-  const ok = (payload as any).ok;
-  const err = (payload as any).error;
-  if (ok === false || (typeof err === 'string' && err.trim().length > 0)) {
-    throw new Error(typeof err === 'string' && err.trim().length > 0 ? err : 'Request failed');
-  }
-}
-
-export async function listAutomations(opts: PlatformOpts = {}): Promise<AutomationSummary[]> {
-  try {
-    const { data } = await platformFetch<any>('/api/automations', {
-      method: 'GET',
-    });
-    throwIfPlatformError(data);
-    const response = Array.isArray(data) ? data : [];
-    const mapped = response.map((item: any) => {
-      const draft = isAutomationDraft(item.draft) ? (item.draft as AutomationDraft) : undefined;
-      const draftSummaries = draft ? summarizeDraft(draft) : {};
-      return {
-        id: String(item.id ?? item.entity_id ?? item.slug ?? ''),
-        alias: String(item.alias ?? item.name ?? 'Automation'),
-        description: typeof item.description === 'string' ? item.description : '',
-        enabled: item.enabled ?? item.state !== 'off',
-        basicSummary: typeof item.basicSummary === 'string' ? item.basicSummary : draftSummaries.basicSummary,
-        triggerSummary: typeof item.triggerSummary === 'string' ? item.triggerSummary : draftSummaries.triggerSummary,
-        actionSummary: typeof item.actionSummary === 'string' ? item.actionSummary : draftSummaries.actionSummary,
-        hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : draftSummaries.hasDeviceAction,
-        draft,
-      };
-    });
-    const enriched = await enrichAutomationsWithHaDetails(mapped, opts);
-    return filterAutomations(enriched);
-  } catch (err) {
-    const fallback = await maybeListAutomationsViaHa(opts);
-    if (fallback) return fallback;
-    throw err;
-  }
-}
-
-export async function createAutomation(draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
-  const payload = { draft, haConfig: compileAutomationDraftToHaConfig(draft) };
-  try {
-    const { data } = await platformFetch('/api/automations', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    throwIfPlatformError(data);
-    return;
-  } catch (err) {
-    try {
-      const ok = await maybeUpsertAutomationViaHa(payload.haConfig, opts);
-      if (ok) return;
-    } catch (fallbackErr) {
-      throw fallbackErr;
-    }
-    throw err;
-  }
-}
-
-export async function updateAutomation(id: string, draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
-  const payload = { draft: { ...draft, id }, haConfig: compileAutomationDraftToHaConfig({ ...draft, id }) };
-  try {
-    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-    throwIfPlatformError(data);
-    return;
-  } catch (err) {
-    try {
-      const ok = await maybeUpsertAutomationViaHa(payload.haConfig, opts);
-      if (ok) return;
-    } catch (fallbackErr) {
-      throw fallbackErr;
-    }
-    throw err;
-  }
-}
-
-export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Promise<void> {
-  try {
-    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
-    throwIfPlatformError(data);
-    return;
-  } catch (err) {
-    try {
-      const ok = await maybeDeleteAutomationViaHa(id, opts);
-      if (ok) return;
-    } catch (fallbackErr) {
-      throw fallbackErr;
-    }
-    throw err;
-  }
-}
-
-export async function setAutomationEnabled(id: string, enabled: boolean, opts: PlatformOpts = {}): Promise<void> {
-  const action = enabled ? 'enable' : 'disable';
-  try {
-    const { data } = await platformFetch(`/api/automations/${encodeURIComponent(id)}/${action}`, {
-      method: 'POST',
-    });
-    throwIfPlatformError(data);
-    return;
-  } catch (err) {
-    try {
-      const ok = await maybeToggleAutomationViaHa(id, enabled, opts);
-      if (ok) return;
-    } catch (fallbackErr) {
-      throw fallbackErr;
-    }
-    throw err;
-  }
-}
-
 type HaConn = { baseUrl: string; token: string };
+
+function makeAutomationId() {
+  // Lightweight unique id that matches Next.js style: dinodia_<uuid-like>
+  const random = Math.random().toString(16).slice(2);
+  const time = Date.now().toString(16);
+  return `dinodia_${time}${random}`.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+}
 
 function resolveHa(conn: HaConnection | null | undefined, mode?: HaMode): HaConn | null {
   if (!conn) return null;
@@ -159,88 +52,6 @@ async function haFetch(ha: HaConn, path: string, init: RequestInit = {}) {
     throw new Error(text || `HA request failed (${res.status})`);
   }
   return res;
-}
-
-async function maybeListAutomationsViaHa(opts: PlatformOpts): Promise<AutomationSummary[] | null> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
-  if (!ha) return null;
-  try {
-    const res = await haFetch(ha, '/api/states');
-    const states = await res.json();
-    if (!Array.isArray(states)) return [];
-    const base = states
-      .filter((s: any) => typeof s?.entity_id === 'string' && s.entity_id.startsWith('automation.'))
-      .map((s: any) => ({
-        id: s.attributes?.id || s.entity_id.replace('automation.', ''),
-        alias: s.attributes?.friendly_name || s.entity_id,
-        description: s.attributes?.description ?? '',
-        enabled: String(s.state || '').toLowerCase() !== 'off',
-      }));
-    const enriched = await enrichAutomationsWithHaDetails(base, opts);
-    return filterAutomations(enriched);
-  } catch {
-    return null;
-  }
-}
-
-async function maybeUpsertAutomationViaHa(haConfig: any, opts: PlatformOpts): Promise<boolean> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
-  if (!ha) return false;
-  try {
-    const id = haConfig.id || haConfig.alias || `mobile_${Date.now()}`;
-    await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, {
-      method: 'POST',
-      body: JSON.stringify({ ...haConfig, id }),
-    });
-    return true;
-  } catch (err) {
-    throw err;
-  }
-}
-
-async function maybeDeleteAutomationViaHa(id: string, opts: PlatformOpts): Promise<boolean> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
-  if (!ha) return false;
-  try {
-    await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function maybeToggleAutomationViaHa(id: string, enabled: boolean, opts: PlatformOpts): Promise<boolean> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
-  if (!ha) return false;
-  try {
-    const service = enabled ? 'turn_on' : 'turn_off';
-    await haFetch(ha, `/api/services/automation/${service}`, {
-      method: 'POST',
-      body: JSON.stringify({ entity_id: `automation.${id}` }),
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function fetchHaAutomationConfig(ha: HaConn, id: string) {
-  try {
-    const res = await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`);
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchHaAutomationConfigs(ha: HaConn) {
-  try {
-    const res = await haFetch(ha, '/api/config/automation');
-    const json = await res.json();
-    return Array.isArray(json) ? json : null;
-  } catch {
-    return null;
-  }
 }
 
 function entityIdFromTarget(target: any): string | null {
@@ -372,16 +183,175 @@ function summarizeActions(actions: any[]): string | undefined {
   return parts.join('; ');
 }
 
-function isAutomationDraft(value: any): value is AutomationDraft {
-  return value && typeof value === 'object' && Array.isArray(value.actions) && Array.isArray(value.triggers);
+function hasTemplates(node: any): boolean {
+  if (node == null) return false;
+  if (typeof node === 'string') return node.includes('{{');
+  if (Array.isArray(node)) return node.some(hasTemplates);
+  if (typeof node === 'object') {
+    return Object.values(node as Record<string, unknown>).some(hasTemplates);
+  }
+  return false;
 }
 
-function summarizeDraft(draft: AutomationDraft) {
-  const triggerSummary = summarizeTriggers(draft.triggers as unknown as AutomationTrigger[]);
-  const actionSummary = summarizeActions(draft.actions as unknown as AutomationAction[]);
-  const hasDeviceAction = Array.isArray(draft.actions) ? draft.actions.some((a) => a.kind === 'device_command') : undefined;
-  const basicSummary = draft.description || draft.alias;
-  return { triggerSummary, actionSummary, hasDeviceAction, basicSummary };
+export async function listAutomations(opts: PlatformOpts = {}): Promise<AutomationSummary[]> {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha) throw new Error('Dinodia Hub connection is not configured.');
+  const list = await maybeListAutomationsViaHa(ha);
+  const enriched = await enrichAutomationsWithHaDetails(list, ha);
+  return filterAutomations(enriched);
+}
+
+export async function createAutomation(draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha) throw new Error('Dinodia Hub connection is not configured.');
+  const haConfig = compileAutomationDraftToHaConfig(draft);
+  const id = (haConfig.id || makeAutomationId()).replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+  const payload = { ...haConfig, id };
+  await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  try {
+    await platformFetch('/api/automations?recordOnly=1', {
+      method: 'POST',
+      body: JSON.stringify({ automationId: id }),
+    });
+  } catch {
+    // best effort
+  }
+}
+
+export async function updateAutomation(id: string, draft: AutomationDraft, opts: PlatformOpts = {}) {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha) throw new Error('Dinodia Hub connection is not configured.');
+  const haConfig = compileAutomationDraftToHaConfig({ ...draft, id });
+  await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: JSON.stringify({ ...haConfig, id }),
+  });
+}
+
+export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Promise<void> {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha) throw new Error('Dinodia Hub connection is not configured.');
+  await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
+    () => undefined
+  );
+  try {
+    await platformFetch(`/api/automations/${encodeURIComponent(id)}?recordOnly=1`, {
+      method: 'DELETE',
+    });
+  } catch {
+    // best effort
+  }
+}
+
+export async function setAutomationEnabled(id: string, enabled: boolean, opts: PlatformOpts = {}): Promise<void> {
+  const ha = resolveHa(opts.haConnection, opts.mode);
+  if (!ha) throw new Error('Dinodia Hub connection is not configured.');
+  const service = enabled ? 'turn_on' : 'turn_off';
+  await haFetch(ha, `/api/services/automation/${service}`, {
+    method: 'POST',
+    body: JSON.stringify({ entity_id: `automation.${id}` }),
+  });
+}
+
+async function fetchHaAutomationConfig(ha: HaConn, id: string) {
+  try {
+    const res = await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`);
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHaAutomationConfigs(ha: HaConn) {
+  try {
+    const res = await haFetch(ha, '/api/config/automation');
+    const json = await res.json();
+    return Array.isArray(json) ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+async function maybeListAutomationsViaHa(ha: HaConn): Promise<AutomationSummary[]> {
+  try {
+    const res = await haFetch(ha, '/api/states');
+    const states = await res.json();
+    if (!Array.isArray(states)) return [];
+    return states
+      .filter((s: any) => typeof s?.entity_id === 'string' && s.entity_id.startsWith('automation.'))
+      .map((s: any) => ({
+        id: s.attributes?.id || s.entity_id.replace('automation.', ''),
+        alias: s.attributes?.friendly_name || s.entity_id,
+        description: s.attributes?.description ?? '',
+        enabled: String(s.state || '').toLowerCase() !== 'off',
+        entities: [],
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function enrichAutomationsWithHaDetails(list: AutomationSummary[], ha: HaConn): Promise<AutomationSummary[]> {
+  if (list.length === 0) return list;
+  let cachedConfigs: any[] | null = null;
+
+  const ensureConfigs = async () => {
+    if (cachedConfigs !== null) return cachedConfigs;
+    cachedConfigs = await fetchHaAutomationConfigs(ha);
+    return cachedConfigs;
+  };
+
+  const enriched = await Promise.all(
+    list.map(async (item) => {
+      let config = await fetchHaAutomationConfig(ha, item.id);
+      if (!config) {
+        const allConfigs = await ensureConfigs();
+        if (allConfigs) {
+          config = findMatchingConfig(item, allConfigs);
+        }
+      }
+      if (!config) return item;
+      const triggers = Array.isArray(config.trigger) ? config.trigger : [];
+      const actions = Array.isArray(config.action) ? config.action : [];
+      const triggerSummary = summarizeTriggers(triggers);
+      const actionSummary = summarizeActions(actions);
+      const hasDeviceAction = actions.length > 0 ? actions.some(actionTargetsDevice) : false;
+      const entities = extractActionEntities(actions);
+      const templates =
+        hasTemplates(triggers) || hasTemplates(actions) || hasTemplates(config.condition ?? config.conditions);
+      return {
+        ...item,
+        description: item.description || config.description || '',
+        basicSummary: item.basicSummary || config.description || config.alias || item.alias,
+        triggerSummary: item.triggerSummary || triggerSummary,
+        actionSummary: item.actionSummary || actionSummary,
+        hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : hasDeviceAction,
+        entities,
+        hasTemplates: templates,
+        canEdit: !templates,
+      };
+    })
+  );
+  return enriched;
+}
+
+function extractActionEntities(actions: any[]): string[] {
+  const entities = new Set<string>();
+  actions.forEach((action) => {
+    const fromTarget = entityIdFromTarget(action.target);
+    if (fromTarget) entities.add(fromTarget);
+    const direct = action.entity_id ?? action.data?.entity_id;
+    if (typeof direct === 'string') entities.add(direct);
+    if (Array.isArray(direct)) {
+      direct.forEach((d) => {
+        if (typeof d === 'string') entities.add(d);
+      });
+    }
+  });
+  return Array.from(entities);
 }
 
 function findMatchingConfig(item: AutomationSummary, configs: any[]): any | null {
@@ -397,48 +367,6 @@ function findMatchingConfig(item: AutomationSummary, configs: any[]): any | null
     }
   }
   return null;
-}
-
-async function enrichAutomationsWithHaDetails(list: AutomationSummary[], opts: PlatformOpts): Promise<AutomationSummary[]> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
-  if (!ha || list.length === 0) return list;
-  let cachedConfigs: any[] | null = null;
-
-  const ensureConfigs = async () => {
-    if (cachedConfigs !== null) return cachedConfigs;
-    cachedConfigs = await fetchHaAutomationConfigs(ha);
-    return cachedConfigs;
-  };
-
-  const enriched = await Promise.all(
-    list.map(async (item) => {
-      if (item.triggerSummary && item.actionSummary && typeof item.hasDeviceAction === 'boolean') {
-        return item;
-      }
-      let config = await fetchHaAutomationConfig(ha, item.id);
-      if (!config) {
-        const allConfigs = await ensureConfigs();
-        if (allConfigs) {
-          config = findMatchingConfig(item, allConfigs);
-        }
-      }
-      if (!config) return item;
-      const triggers = Array.isArray(config.trigger) ? config.trigger : [];
-      const actions = Array.isArray(config.action) ? config.action : [];
-      const triggerSummary = summarizeTriggers(triggers);
-      const actionSummary = summarizeActions(actions);
-      const hasDeviceAction = actions.length > 0 ? actions.some(actionTargetsDevice) : false;
-      return {
-        ...item,
-        description: item.description || config.description || '',
-        basicSummary: item.basicSummary || config.description || config.alias || item.alias,
-        triggerSummary: item.triggerSummary || triggerSummary,
-        actionSummary: item.actionSummary || actionSummary,
-        hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : hasDeviceAction,
-      };
-    })
-  );
-  return enriched;
 }
 
 function filterAutomations(list: AutomationSummary[]): AutomationSummary[] {

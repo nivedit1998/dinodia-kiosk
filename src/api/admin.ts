@@ -15,6 +15,24 @@ type SellingResponse = {
   error?: string;
 };
 
+export type TenantRecord = {
+  id: number;
+  username: string;
+  areas: string[];
+};
+
+type TenantsResponse = {
+  ok?: boolean;
+  tenants?: TenantRecord[];
+  error?: string;
+};
+
+type UpdateTenantResponse = {
+  ok?: boolean;
+  tenant?: TenantRecord;
+  error?: string;
+};
+
 export async function createTenant(params: {
   username: string;
   password: string;
@@ -31,6 +49,57 @@ export async function createTenant(params: {
 
   if (!data.ok) {
     throw new Error(data.error || "We couldn't create this tenant right now. Please try again.");
+  }
+}
+
+export async function fetchTenants(): Promise<TenantRecord[]> {
+  const { data } = await platformFetch<TenantsResponse>('/api/admin/tenant', {
+    method: 'GET',
+  });
+  if (!data.ok) {
+    throw new Error(data.error || 'Failed to load tenants.');
+  }
+  const tenants = Array.isArray(data.tenants) ? data.tenants : [];
+  return tenants
+    .map((t) => ({
+      id: typeof t.id === 'number' ? t.id : Number(t.id),
+      username: typeof t.username === 'string' ? t.username : '',
+      areas: Array.isArray(t.areas)
+        ? t.areas
+            .filter((a: unknown): a is string => typeof a === 'string')
+            .map((a) => a.trim())
+            .filter(Boolean)
+        : [],
+    }))
+    .filter((t) => Number.isFinite(t.id) && t.username.length > 0);
+}
+
+export async function updateTenantAreas(tenantId: number, areas: string[]): Promise<TenantRecord> {
+  const { data } = await platformFetch<UpdateTenantResponse>(`/api/admin/tenant/${tenantId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ areas }),
+  });
+  if (!data.ok || !data.tenant) {
+    throw new Error(data.error || 'Failed to update tenant areas.');
+  }
+  return {
+    id: data.tenant.id,
+    username: data.tenant.username,
+    areas: Array.isArray(data.tenant.areas)
+      ? data.tenant.areas
+          .filter((a: unknown): a is string => typeof a === 'string')
+          .map((a) => a.trim())
+          .filter(Boolean)
+      : [],
+  };
+}
+
+export async function deleteTenant(tenantId: number): Promise<void> {
+  const { data } = await platformFetch<UpdateTenantResponse>(`/api/admin/tenant/${tenantId}`, {
+    method: 'DELETE',
+  });
+  if (!data.ok) {
+    throw new Error(data.error || 'Failed to delete tenant.');
   }
 }
 

@@ -1,5 +1,5 @@
 // src/screens/AdminHomeSetupScreen.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   NativeModules,
@@ -11,7 +11,14 @@ import {
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { createTenant, deregisterProperty } from '../api/admin';
+import {
+  createTenant,
+  deleteTenant as deleteTenantApi,
+  deregisterProperty,
+  fetchTenants,
+  updateTenantAreas,
+  type TenantRecord,
+} from '../api/admin';
 import { useDevices } from '../store/deviceStore';
 import { useSession } from '../store/sessionStore';
 import { CloudModePrompt } from '../components/CloudModePrompt';
@@ -25,6 +32,8 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 
 type SellingMode = 'FULL_RESET' | 'OWNER_TRANSFER';
+type TenantInfo = TenantRecord;
+type TenantActionState = { saving: boolean; error: string | null };
 
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -36,6 +45,7 @@ export function AdminHomeSetupScreen() {
   const userId = session.user?.id;
   const { devices, error, refreshing, refreshDevices } = useDevices(userId || 0, haMode);
   const remoteAccess = useRemoteAccessStatus(haMode);
+  const tenantLocked = remoteAccess.status !== 'enabled';
   const isCloud = haMode === 'cloud';
   const { wifiName, batteryLevel } = useDeviceStatus();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -45,6 +55,13 @@ export function AdminHomeSetupScreen() {
   const [tenantAreas, setTenantAreas] = useState<string[]>([]);
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantMsg, setTenantMsg] = useState<string | null>(null);
+  const [viewTenantsOpen, setViewTenantsOpen] = useState(false);
+  const [addTenantOpen, setAddTenantOpen] = useState(false);
+  const [tenants, setTenants] = useState<TenantInfo[]>([]);
+  const [tenantsLoading, setTenantsLoading] = useState(false);
+  const [tenantsError, setTenantsError] = useState<string | null>(null);
+  const [tenantAreaInputs, setTenantAreaInputs] = useState<Record<number, string>>({});
+  const [tenantActions, setTenantActions] = useState<Record<number, TenantActionState>>({});
 
   const [sellingMode, setSellingMode] = useState<SellingMode | null>(null);
   const [sellingLoading, setSellingLoading] = useState(false);
@@ -71,6 +88,102 @@ export function AdminHomeSetupScreen() {
     );
   };
 
+  const updateTenantActionState = (tenantId: number, updates: Partial<TenantActionState>) => {
+    setTenantActions((prev) => ({
+      ...prev,
+      [tenantId]: { ...(prev[tenantId] ?? { saving: false, error: null }), ...updates },
+    }));
+  };
+
+  const refreshTenants = useCallback(async () => {
+    setTenantsLoading(true);
+    setTenantsError(null);
+    try {
+      const list = await fetchTenants();
+      setTenants(list);
+      setTenantAreaInputs((prev) => {
+        const next: Record<number, string> = {};
+        list.forEach((t) => {
+          next[t.id] = prev[t.id] ?? '';
+        });
+        return next;
+      });
+    } catch (err) {
+      setTenantsError(err instanceof Error ? err.message : 'Failed to load tenants.');
+    } finally {
+      setTenantsLoading(false);
+    }
+  }, []);
+
+  const ensureTenantsLoaded = useCallback(async () => {
+    if (tenants.length === 0 && !tenantsLoading) {
+      await refreshTenants();
+    }
+  }, [refreshTenants, tenants.length, tenantsLoading]);
+
+  const handleRemoveTenantArea = async (tenant: TenantInfo, area: string) => {
+    const nextAreas = tenant.areas.filter((a) => a !== area);
+    updateTenantActionState(tenant.id, { saving: true, error: null });
+    try {
+      const updated = await updateTenantAreas(tenant.id, nextAreas);
+      setTenants((prev) => prev.map((t) => (t.id === tenant.id ? updated : t)));
+    } catch (err) {
+      updateTenantActionState(tenant.id, {
+        saving: false,
+        error: err instanceof Error ? err.message : 'Failed to update areas.',
+      });
+      return;
+    }
+    updateTenantActionState(tenant.id, { saving: false, error: null });
+  };
+
+  const handleAddTenantArea = async (tenant: TenantInfo) => {
+    const input = (tenantAreaInputs[tenant.id] ?? '').trim();
+    if (!input || tenant.areas.includes(input)) return;
+    const nextAreas = [...tenant.areas, input];
+    updateTenantActionState(tenant.id, { saving: true, error: null });
+    try {
+      const updated = await updateTenantAreas(tenant.id, nextAreas);
+      setTenants((prev) => prev.map((t) => (t.id === tenant.id ? updated : t)));
+      setTenantAreaInputs((prev) => ({ ...prev, [tenant.id]: '' }));
+    } catch (err) {
+      updateTenantActionState(tenant.id, {
+        saving: false,
+        error: err instanceof Error ? err.message : 'Failed to update areas.',
+      });
+      return;
+    }
+    updateTenantActionState(tenant.id, { saving: false, error: null });
+  };
+
+  const handleDeleteTenant = (tenant: TenantInfo) => {
+    Alert.alert(
+      'Delete tenant',
+      `Are you sure you want to delete ${tenant.username}? This removes their areas and devices added via Dinodia.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            updateTenantActionState(tenant.id, { saving: true, error: null });
+            try {
+              await deleteTenantApi(tenant.id);
+              setTenants((prev) => prev.filter((t) => t.id !== tenant.id));
+            } catch (err) {
+              updateTenantActionState(tenant.id, {
+                saving: false,
+                error: err instanceof Error ? err.message : 'Failed to delete tenant.',
+              });
+              return;
+            }
+            updateTenantActionState(tenant.id, { saving: false, error: null });
+          },
+        },
+      ]
+    );
+  };
+
   const handleCreateTenant = async () => {
     setTenantMsg(null);
     if (!tenantUsername.trim() || !tenantPassword) {
@@ -92,6 +205,9 @@ export function AdminHomeSetupScreen() {
       setTenantUsername('');
       setTenantPassword('');
       setTenantAreas([]);
+      if (viewTenantsOpen && !tenantLocked) {
+        await refreshTenants();
+      }
     } catch (err) {
       setTenantMsg(err instanceof Error ? err.message : 'We could not add that tenant right now.');
     } finally {
@@ -127,10 +243,9 @@ export function AdminHomeSetupScreen() {
   };
 
   useEffect(() => {
-    if (isCloud && remoteAccess.status === 'locked') {
-      setHaMode('home');
-    }
-  }, [isCloud, remoteAccess.status, setHaMode]);
+    if (!viewTenantsOpen || tenantLocked) return;
+    void refreshTenants();
+  }, [refreshTenants, tenantLocked, viewTenantsOpen]);
 
   const {
     promptVisible: cloudPromptVisible,
@@ -187,76 +302,234 @@ export function AdminHomeSetupScreen() {
         <Text style={styles.subheader}>Admin only</Text>
 
         <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Home setup - add tenant</Text>
-            <TouchableOpacity
-              onPress={() => void refreshDevices()}
-              disabled={refreshing}
-              style={styles.refreshButton}
-            >
-              <Text style={styles.refreshText}>{refreshing ? 'Refreshing...' : 'Refresh areas'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <TextField
-            label="Tenant username"
-            placeholder="tenant@example.com"
-            autoCapitalize="none"
-            value={tenantUsername}
-            onChangeText={setTenantUsername}
-            keyboardType="email-address"
-          />
-          <TextField
-            label="Tenant password"
-            placeholder="********"
-            secureTextEntry
-            secureToggle
-            value={tenantPassword}
-            onChangeText={setTenantPassword}
-          />
-
-          <Text style={styles.label}>Select rooms</Text>
-          {availableAreas.length > 0 ? (
-            <View style={styles.areaSuggestions}>
-              {availableAreas.map((area) => (
-                <TouchableOpacity
-                  key={area}
-                  style={[
-                    styles.areaChip,
-                    tenantAreas.includes(area) && styles.areaChipSelected,
-                  ]}
-                  onPress={() => toggleArea(area)}
-                  activeOpacity={0.85}
-                >
-                  <Text
-                    style={[
-                      styles.areaChipText,
-                      tenantAreas.includes(area) && styles.areaChipTextSelected,
-                    ]}
-                  >
-                    {area}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.helperText}>No areas available yet. Add devices to create areas.</Text>
-          )}
-
-          {tenantMsg ? (
-            <Text style={tenantMsg.includes('success') ? styles.successText : styles.errorText}>
-              {tenantMsg}
+          <TouchableOpacity
+            style={styles.collapseHeader}
+            activeOpacity={0.85}
+            onPress={() => {
+              const next = !viewTenantsOpen;
+              setViewTenantsOpen(next);
+              if (next && !tenantLocked) {
+                void ensureTenantsLoaded();
+              }
+            }}
+          >
+            <Text style={styles.sectionTitle}>Home setup - view tenants</Text>
+            <Text style={styles.collapseToggle}>{viewTenantsOpen ? 'Hide' : 'Show'}</Text>
+          </TouchableOpacity>
+          {tenantLocked ? (
+            <Text style={styles.lockBanner}>
+              {remoteAccess.message ??
+                'Remote access must be enabled before managing tenants from this device.'}
             </Text>
           ) : null}
+          {viewTenantsOpen ? (
+            <View
+              style={[
+                styles.sectionBody,
+                tenantLocked && styles.sectionDisabled,
+              ]}
+              pointerEvents={tenantLocked ? 'none' : 'auto'}
+            >
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.helperText}>
+                  View tenants in this home and update their areas.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => void refreshTenants()}
+                  disabled={tenantsLoading || tenantLocked}
+                  style={styles.refreshButton}
+                >
+                  <Text style={styles.refreshText}>
+                    {tenantsLoading ? 'Refreshing...' : 'Refresh'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {tenantsError ? <Text style={styles.errorText}>{tenantsError}</Text> : null}
+              {tenantsLoading ? (
+                <Text style={styles.helperText}>Loading tenants…</Text>
+              ) : tenants.length === 0 ? (
+                <Text style={styles.helperText}>No tenants yet.</Text>
+              ) : (
+                <View style={styles.tenantList}>
+                  {tenants.map((tenant) => {
+                    const state = tenantActions[tenant.id] ?? { saving: false, error: null };
+                    const areaInput = tenantAreaInputs[tenant.id] ?? '';
+                    const suggestions = availableAreas.filter(
+                      (a) => !tenant.areas.includes(a)
+                    );
+                    return (
+                      <View key={tenant.id} style={styles.tenantCard}>
+                        <View style={styles.tenantHeaderRow}>
+                          <Text style={styles.tenantName}>{tenant.username}</Text>
+                          <TouchableOpacity
+                            onPress={() => handleDeleteTenant(tenant)}
+                            disabled={state.saving}
+                            style={styles.deleteButton}
+                          >
+                            <Text style={styles.deleteText}>Delete</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.label}>Areas</Text>
+                        <View style={styles.areaSuggestions}>
+                          {tenant.areas.length > 0 ? (
+                            tenant.areas.map((area) => (
+                              <TouchableOpacity
+                                key={area}
+                                style={styles.areaChip}
+                                onPress={() => void handleRemoveTenantArea(tenant, area)}
+                                disabled={state.saving}
+                              >
+                                <Text style={styles.areaChipText}>{area}</Text>
+                                <Text style={styles.removeChip}>x</Text>
+                              </TouchableOpacity>
+                              ))
+                            ) : (
+                              <Text style={styles.helperText}>No areas assigned.</Text>
+                            )}
+                        </View>
 
-          <PrimaryButton
-            title={tenantLoading ? 'Adding...' : 'Add tenant'}
-            onPress={() => void handleCreateTenant()}
-            disabled={tenantLoading}
-            style={[styles.compactButton, { marginTop: spacing.sm }]}
-          />
+                        <Text style={styles.label}>Add area</Text>
+                        {suggestions.length > 0 ? (
+                          <View style={styles.areaSuggestions}>
+                            {suggestions.map((area) => (
+                              <TouchableOpacity
+                                key={area}
+                                style={[
+                                  styles.areaChipSmall,
+                                  areaInput === area && styles.areaChipSelected,
+                                ]}
+                                onPress={() =>
+                                  setTenantAreaInputs((prev) => ({ ...prev, [tenant.id]: area }))
+                                }
+                                activeOpacity={0.85}
+                              >
+                                <Text
+                                  style={[
+                                    styles.areaChipText,
+                                    areaInput === area && styles.areaChipTextSelected,
+                                  ]}
+                                >
+                                  {area}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        ) : (
+                          <Text style={styles.helperText}>No unassigned areas available.</Text>
+                        )}
+                        {state.error ? <Text style={styles.errorText}>{state.error}</Text> : null}
+                        <PrimaryButton
+                          title={state.saving ? 'Saving…' : 'Add area'}
+                          onPress={() => void handleAddTenantArea(tenant)}
+                          disabled={state.saving || !areaInput.trim()}
+                          style={styles.compactButton}
+                        />
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.collapseHeader}
+            activeOpacity={0.85}
+            onPress={() => setAddTenantOpen((prev) => !prev)}
+          >
+            <Text style={styles.sectionTitle}>Home setup - add tenant</Text>
+            <Text style={styles.collapseToggle}>{addTenantOpen ? 'Hide' : 'Show'}</Text>
+          </TouchableOpacity>
+          {tenantLocked ? (
+            <Text style={styles.lockBanner}>
+              {remoteAccess.message ??
+                'Remote access must be enabled before adding tenants from this device.'}
+            </Text>
+          ) : null}
+          {addTenantOpen ? (
+            <View
+              style={[
+                styles.sectionBody,
+                tenantLocked && styles.sectionDisabled,
+              ]}
+              pointerEvents={tenantLocked ? 'none' : 'auto'}
+            >
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.helperText}>Create a new tenant and assign their rooms.</Text>
+                <TouchableOpacity
+                  onPress={() => void refreshDevices()}
+                  disabled={refreshing}
+                  style={styles.refreshButton}
+                >
+                  <Text style={styles.refreshText}>
+                    {refreshing ? 'Refreshing...' : 'Refresh areas'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+              <TextField
+                label="Tenant username"
+                placeholder="tenant@example.com"
+                autoCapitalize="none"
+                value={tenantUsername}
+                onChangeText={setTenantUsername}
+                keyboardType="email-address"
+              />
+              <TextField
+                label="Tenant password"
+                placeholder="********"
+                secureTextEntry
+                secureToggle
+                value={tenantPassword}
+                onChangeText={setTenantPassword}
+              />
+
+              <Text style={styles.label}>Select rooms</Text>
+              {availableAreas.length > 0 ? (
+                <View style={styles.areaSuggestions}>
+                  {availableAreas.map((area) => (
+                    <TouchableOpacity
+                      key={area}
+                      style={[
+                        styles.areaChip,
+                        tenantAreas.includes(area) && styles.areaChipSelected,
+                      ]}
+                      onPress={() => toggleArea(area)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.areaChipText,
+                          tenantAreas.includes(area) && styles.areaChipTextSelected,
+                        ]}
+                      >
+                        {area}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.helperText}>No areas available yet. Add devices to create areas.</Text>
+              )}
+
+              {tenantMsg ? (
+                <Text style={tenantMsg.includes('success') ? styles.successText : styles.errorText}>
+                  {tenantMsg}
+                </Text>
+              ) : null}
+
+              <PrimaryButton
+                title={tenantLoading ? 'Adding...' : 'Add tenant'}
+                onPress={() => void handleCreateTenant()}
+                disabled={tenantLoading}
+                style={[styles.compactButton, { marginTop: spacing.sm }]}
+              />
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -376,7 +649,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
   container: {
     padding: spacing.xl,
-    gap: spacing.lg,
+    gap: spacing.md,
     width: '100%',
     maxWidth: maxContentWidth,
     alignSelf: 'center',
@@ -398,6 +671,28 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: palette.text },
+  collapseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  collapseToggle: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
+  lockBanner: {
+    marginTop: spacing.sm,
+    backgroundColor: '#fef3c7',
+    borderColor: '#fcd34d',
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.sm,
+    color: '#92400e',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sectionBody: {
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  sectionDisabled: { opacity: 0.5 },
   label: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
   refreshButton: {
     borderRadius: radii.pill,
@@ -407,6 +702,8 @@ const styles = StyleSheet.create({
   refreshText: { fontSize: 12, color: palette.primary, fontWeight: '600' },
   areaSuggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   areaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderRadius: radii.pill,
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
@@ -414,12 +711,47 @@ const styles = StyleSheet.create({
     borderColor: palette.outline,
     backgroundColor: palette.surfaceMuted,
   },
+  areaChipSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radii.pill,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    backgroundColor: palette.surface,
+  },
   areaChipSelected: { backgroundColor: 'rgba(10,132,255,0.12)', borderColor: palette.primary },
   areaChipText: { fontSize: 12, color: palette.textMuted, fontWeight: '600' },
   areaChipTextSelected: { color: palette.primary },
+  removeChip: { marginLeft: spacing.xs, color: palette.textMuted, fontWeight: '700' },
   helperText: { fontSize: 12, color: palette.textMuted },
   successText: { color: palette.success, fontWeight: '600' },
   errorText: { color: palette.danger, fontWeight: '600' },
+  tenantList: { gap: spacing.sm },
+  tenantCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: spacing.md,
+    backgroundColor: palette.surface,
+    gap: spacing.xs,
+  },
+  tenantHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tenantName: { fontSize: 14, fontWeight: '700', color: palette.text },
+  deleteButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+    backgroundColor: '#fff1f2',
+  },
+  deleteText: { color: palette.danger, fontWeight: '700', fontSize: 12 },
   claimBox: {
     borderRadius: radii.lg,
     padding: spacing.lg,
