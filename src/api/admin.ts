@@ -122,13 +122,13 @@ export async function fetchSellingCleanupTargets(): Promise<{ deviceIds: string[
 export async function deregisterProperty(
   mode: SellingMode,
   opts: { cleanup?: 'platform' | 'device' } = {}
-): Promise<{ claimCode: string }> {
+): Promise<{ claimCode?: string }> {
   const { data } = await platformFetch<SellingResponse>('/api/admin/selling-property', {
     method: 'POST',
     body: JSON.stringify({ mode, cleanup: opts.cleanup }),
   });
-  if (!data.ok || !data.claimCode) {
-    throw new Error(data.error || 'We could not retrieve the claim code. Please try again.');
+  if (!data.ok) {
+    throw new Error(data.error || 'We could not complete this request. Please try again.');
   }
   return { claimCode: data.claimCode };
 }

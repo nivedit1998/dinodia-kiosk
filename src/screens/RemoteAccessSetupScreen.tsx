@@ -356,6 +356,10 @@ export function RemoteAccessSetupScreen() {
   const [lastProbeSuccess, setLastProbeSuccess] = useState(false);
   const [hasSavedCloudUrl, setHasSavedCloudUrl] = useState(false);
   const [candidateCloudUrl, setCandidateCloudUrl] = useState<string | null>(null);
+  const [detectedCloudUrl, setDetectedCloudUrl] = useState<string | null>(null);
+  const [ignoredDetectedCloudUrl, setIgnoredDetectedCloudUrl] = useState<string | null>(null);
+  const [showDetectedPrompt, setShowDetectedPrompt] = useState(false);
+  const [suppressApiDetection, setSuppressApiDetection] = useState(false);
   const [cloudCheckStatus, setCloudCheckStatus] = useState<'idle' | 'checking' | 'green' | 'red'>(
     'idle'
   );
@@ -370,7 +374,7 @@ export function RemoteAccessSetupScreen() {
     () => (haConnection?.cloudUrl ?? '').trim().replace(/\/+$/, ''),
     [haConnection?.cloudUrl]
   );
-  const checkingCandidate = Boolean(hasAcknowledgedLogin && candidateCloudUrl);
+  const checkingCandidate = Boolean(candidateCloudUrl);
   const cloudConnected =
     cloudCheckStatus === 'green' && !checkingCandidate && Boolean(existingCloudUrl);
   const connectDisabled = cloudConnected && !allowReconnect;
@@ -379,6 +383,50 @@ export function RemoteAccessSetupScreen() {
     if (existingCloudUrl) return existingCloudUrl;
     return '';
   }, [candidateCloudUrl, checkingCandidate, existingCloudUrl]);
+
+  const acceptDetectedUrl = useCallback((normalized: string) => {
+    setCandidateCloudUrl(normalized);
+    setDetectedCloudUrl(null);
+    setShowDetectedPrompt(false);
+    setSuppressApiDetection(false);
+    setCloudUrlInput(normalized);
+    setCloudCheckStatus('checking');
+    setCloudCheckLastError(null);
+  }, []);
+
+  const beginAccountChangeFlow = useCallback(
+    (opts: { openWebview?: boolean } = {}) => {
+      setAllowReconnect(true);
+      setHasAcknowledgedLogin(false);
+      setCandidateCloudUrl(null);
+      setDetectedCloudUrl(null);
+      setShowDetectedPrompt(false);
+      setCloudCheckLastError(null);
+      setCloudCheckStatus('checking');
+      setSaveCompleted(false);
+      hasAutoSavedRef.current = false;
+      setShowConnectSection(true);
+      setSuppressApiDetection(true);
+      setCloudUrlInput(existingCloudUrl || '');
+      if (opts.openWebview) {
+        setWebviewVisible(true);
+        setWebviewKey((k) => k + 1);
+      }
+    },
+    [existingCloudUrl]
+  );
+
+  const handleUseDetectedLink = useCallback(() => {
+    if (!detectedCloudUrl) return;
+    acceptDetectedUrl(detectedCloudUrl);
+  }, [acceptDetectedUrl, detectedCloudUrl]);
+
+  const handleChangeDetectedAccount = useCallback(() => {
+    if (detectedCloudUrl) {
+      setIgnoredDetectedCloudUrl(detectedCloudUrl);
+    }
+    beginAccountChangeFlow({ openWebview: true });
+  }, [beginAccountChangeFlow, detectedCloudUrl]);
 
   useEffect(() => {
     if (cloudConnected && !allowReconnect) {
@@ -414,7 +462,7 @@ export function RemoteAccessSetupScreen() {
 
   useEffect(() => {
     if (
-      !hasAcknowledgedLogin ||
+      suppressApiDetection ||
       !baseUrl ||
       !haConnection?.longLivedToken ||
       hasAutoSavedRef.current ||
@@ -455,7 +503,7 @@ export function RemoteAccessSetupScreen() {
     candidateCloudUrl,
     haConnection?.longLivedToken,
     handleDetectedUrl,
-    hasAcknowledgedLogin,
+    suppressApiDetection,
   ]);
 
   const normalizeCloudUrl = useCallback((value: string) => {
@@ -562,9 +610,11 @@ export function RemoteAccessSetupScreen() {
       url: string,
       source: 'auto-api' | 'auto-dom' | 'manual' | 'clipboard' | 'shadow-scan'
     ) => {
-      if (!hasAcknowledgedLogin) return;
       if (!url) return;
       if (isMaskedCloudUrl(url)) {
+        return;
+      }
+      if (suppressApiDetection && source === 'auto-api') {
         return;
       }
       try {
@@ -572,7 +622,22 @@ export function RemoteAccessSetupScreen() {
         const current = (cloudUrlInput || '').trim().replace(/\/+$/, '');
         if (hasAutoSavedRef.current && current === normalized) return;
         if (candidateCloudUrl === normalized) return;
-        setCandidateCloudUrl(normalized);
+        if (detectedCloudUrl === normalized && showDetectedPrompt) return;
+
+        if (ignoredDetectedCloudUrl && normalized === ignoredDetectedCloudUrl) {
+          return;
+        }
+
+        if (existingCloudUrl && normalized === existingCloudUrl) {
+          setCloudUrlInput(existingCloudUrl);
+          return;
+        }
+
+        setDetectedCloudUrl(normalized);
+        setShowDetectedPrompt(true);
+        if (suppressApiDetection && source !== 'auto-api') {
+          setSuppressApiDetection(false);
+        }
         setCloudUrlInput(normalized);
         setCloudCheckStatus('checking');
         setCloudCheckLastError(null);
@@ -580,7 +645,17 @@ export function RemoteAccessSetupScreen() {
         // ignore invalid detected values
       }
     },
-    [candidateCloudUrl, cloudUrlInput, hasAcknowledgedLogin, normalizeCloudUrl]
+    [
+      acceptDetectedUrl,
+      candidateCloudUrl,
+      cloudUrlInput,
+      detectedCloudUrl,
+      existingCloudUrl,
+      ignoredDetectedCloudUrl,
+      normalizeCloudUrl,
+      showDetectedPrompt,
+      suppressApiDetection,
+    ]
   );
 
   const isAllowedNavigation = useCallback(
@@ -748,7 +823,6 @@ export function RemoteAccessSetupScreen() {
 
   const handleWebViewMessage = useCallback(
     (event: any) => {
-      if (!hasAcknowledgedLogin) return;
       try {
         const data = JSON.parse(event?.nativeEvent?.data ?? '{}');
         if (data?.type === 'CLOUD_URL' && typeof data.url === 'string') {
@@ -762,7 +836,7 @@ export function RemoteAccessSetupScreen() {
         // ignore malformed messages
       }
     },
-    [handleDetectedUrl, hasAcknowledgedLogin]
+    [handleDetectedUrl]
   );
 
   const handleWebviewError = useCallback(() => {
@@ -839,7 +913,9 @@ export function RemoteAccessSetupScreen() {
       } else {
         successCount = 0;
         setCloudCheckStatus('red');
-        setCloudCheckLastError('Remote access not reachable yet. Finish Nabu Casa login.');
+        setCloudCheckLastError(
+          'Remote access not reachable yet. If it is enabled, tap Refresh or change account.'
+        );
       }
     };
     void verify();
@@ -959,16 +1035,7 @@ export function RemoteAccessSetupScreen() {
                 </Text>
                 <PrimaryButton
                   title="I want to Change my Nabu Casa account"
-                  onPress={() => {
-                    setAllowReconnect(true);
-                    setHasAcknowledgedLogin(false);
-                    setCandidateCloudUrl(null);
-                    setCloudCheckLastError(null);
-                    setCloudCheckStatus('checking');
-                    setSaveCompleted(false);
-                    hasAutoSavedRef.current = false;
-                    setShowConnectSection(true);
-                  }}
+                  onPress={() => beginAccountChangeFlow()}
                   variant="ghost"
                   style={[styles.compactButton, { marginTop: spacing.sm }]}
                 />
@@ -1017,6 +1084,29 @@ export function RemoteAccessSetupScreen() {
                     I have logged into my Nabu Casa account and unhidden the remote URL
                   </Text>
                 </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {showDetectedPrompt && detectedCloudUrl ? (
+              <View style={styles.detectedCard}>
+                <Text style={styles.detectedTitle}>Remote access link found</Text>
+                <Text style={styles.detectedText}>
+                  We found a Nabu Casa link for this home. Use it or sign in to a different account.
+                </Text>
+                <Text style={styles.detectedLink}>{detectedCloudUrl}</Text>
+                <View style={styles.detectedActions}>
+                  <PrimaryButton
+                    title="Use this link"
+                    onPress={handleUseDetectedLink}
+                    style={styles.compactButton}
+                  />
+                  <PrimaryButton
+                    title="Change account"
+                    variant="ghost"
+                    onPress={handleChangeDetectedAccount}
+                    style={styles.compactButton}
+                  />
+                </View>
               </View>
             ) : null}
 
@@ -1196,6 +1286,22 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   connectedTitle: { color: '#1d4ed8', fontWeight: '700' },
+  detectedCard: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  detectedTitle: { color: '#0f172a', fontWeight: '700' },
+  detectedText: { color: '#475569', lineHeight: 20 },
+  detectedLink: {
+    color: '#0f172a',
+    fontFamily: 'monospace',
+    fontSize: 12,
+  },
+  detectedActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   checkboxRow: {
     flexDirection: 'row',
     alignItems: 'center',

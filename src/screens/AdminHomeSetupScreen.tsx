@@ -299,8 +299,14 @@ export function AdminHomeSetupScreen() {
       const result = await deregisterProperty(mode, {
         cleanup: mode === 'FULL_RESET' ? 'device' : 'platform',
       });
-      setClaimCode(result.claimCode);
-      setSellingMode(mode);
+      if (mode === 'OWNER_TRANSFER' && result.claimCode) {
+        setClaimCode(result.claimCode);
+        setSellingMode(mode);
+      } else if (mode === 'FULL_RESET') {
+        await resetApp();
+      } else {
+        throw new Error('We could not retrieve the claim code. Please try again.');
+      }
     } catch (err) {
       setSellingError(err instanceof Error ? err.message : 'We could not process this request.');
     } finally {
