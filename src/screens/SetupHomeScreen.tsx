@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   NativeModules,
@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
 import { platformFetch } from '../api/platformFetch';
 import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
+import { verifyHaCloudConnection } from '../api/ha';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
@@ -19,9 +20,57 @@ import { palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
-const DEFAULT_HA_BASE_URL = 'http://192.168.0.29:8123';
-const DEFAULT_HA_USERNAME = 'dinodiasmarthub_admin';
-const DEFAULT_HA_PASSWORD = 'DinodiaSmartHub123';
+
+type HubDetails = {
+  haBaseUrl?: string;
+  haLongLivedToken?: string;
+  haUsername?: string;
+  haPassword?: string;
+};
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+function parseHubQrPayload(raw: string): HubDetails | null {
+  const text = (raw || '').trim();
+  if (!text) return null;
+
+  if (/^dinodia:\/\//i.test(text)) {
+    try {
+      const parsed = new URL(text);
+      const baseUrl = parsed.searchParams.get('b') || parsed.searchParams.get('baseUrl');
+      const token = parsed.searchParams.get('t') || parsed.searchParams.get('token');
+      const user = parsed.searchParams.get('u') || parsed.searchParams.get('user');
+      const pass = parsed.searchParams.get('p') || parsed.searchParams.get('pass');
+      return {
+        haBaseUrl: baseUrl || undefined,
+        haLongLivedToken: token || undefined,
+        haUsername: user || undefined,
+        haPassword: pass || undefined,
+      };
+    } catch {
+      // fall through
+    }
+  }
+
+  try {
+    const data = JSON.parse(text);
+    if (data && typeof data === 'object') {
+      return {
+        haBaseUrl: data.baseUrl || data.haBaseUrl || undefined,
+        haLongLivedToken:
+          data.longLivedToken || data.token || data.t || data.llToken || data.haLongLivedToken,
+        haUsername: data.haUsername || data.haAdminUser || data.u || undefined,
+        haPassword: data.haPassword || data.haAdminPass || data.p || undefined,
+      };
+    }
+  } catch {
+    // not JSON
+  }
+
+  return { haLongLivedToken: text };
+}
 
 type RegisterAdminResponse = {
   ok?: boolean;
@@ -44,8 +93,10 @@ export function SetupHomeScreen() {
     password: '',
     email: '',
     confirmEmail: '',
-    haBaseUrl: DEFAULT_HA_BASE_URL,
+    haBaseUrl: '',
     haLongLivedToken: '',
+    haUsername: '',
+    haPassword: '',
   });
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
@@ -57,12 +108,89 @@ export function SetupHomeScreen() {
   const [verifying, setVerifying] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [hubStatus, setHubStatus] = useState<'idle' | 'checking' | 'detected' | 'failed'>('idle');
 
   const awaitingVerification = Boolean(challengeId);
 
   const updateField = (key: keyof typeof form, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    if (
+      key === 'haBaseUrl' ||
+      key === 'haLongLivedToken' ||
+      key === 'haUsername' ||
+      key === 'haPassword'
+    ) {
+      setHubStatus('idle');
+      setScanError(null);
+    }
   };
+
+  const verifyHubReachability = useCallback(
+    async (baseUrl: string, token: string) => {
+      if (!baseUrl.trim() || !token.trim()) return;
+      setHubStatus('checking');
+      try {
+        const ok = await verifyHaCloudConnection(
+          { baseUrl: normalizeBaseUrl(baseUrl), longLivedToken: token.trim() },
+          4000
+        );
+        setHubStatus(ok ? 'detected' : 'failed');
+        if (ok) {
+          setScanError(null);
+          setInfo('Dinodia Hub detected.');
+        } else {
+          setScanError('Dinodia Hub could not be reached. Check Wi-Fi and try again.');
+        }
+      } catch {
+        setHubStatus('failed');
+        setScanError('Dinodia Hub could not be reached. Check Wi-Fi and try again.');
+      }
+    },
+    []
+  );
+
+  const applyHubDetails = useCallback(
+    async (details: HubDetails) => {
+      let nextBase = '';
+      let nextToken = '';
+      let nextUser = '';
+      let nextPass = '';
+
+      setForm((prev) => {
+        nextBase = normalizeBaseUrl(details.haBaseUrl || prev.haBaseUrl);
+        nextToken = (details.haLongLivedToken || prev.haLongLivedToken).trim();
+        nextUser = (details.haUsername || prev.haUsername).trim();
+        nextPass = (details.haPassword || prev.haPassword).trim();
+        return {
+          ...prev,
+          haBaseUrl: nextBase,
+          haLongLivedToken: nextToken,
+          haUsername: nextUser,
+          haPassword: nextPass,
+        };
+      });
+
+      if (nextBase && nextToken) {
+        await verifyHubReachability(nextBase, nextToken);
+      }
+    },
+    [verifyHubReachability]
+  );
+
+  useEffect(() => {
+    if (hubDetected && hubStatus === 'idle') {
+      void verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
+    }
+  }, [form.haBaseUrl, form.haLongLivedToken, hubDetected, hubStatus, verifyHubReachability]);
+
+  const hubDetected = useMemo(
+    () =>
+      form.haBaseUrl.trim().length > 0 &&
+      form.haLongLivedToken.trim().length > 0 &&
+      form.haUsername.trim().length > 0 &&
+      form.haPassword.trim().length > 0,
+    [form.haBaseUrl, form.haLongLivedToken, form.haPassword, form.haUsername]
+  );
 
   const resetVerification = () => {
     if (pollRef.current) {
@@ -166,8 +294,13 @@ export function SetupHomeScreen() {
       setError('Email addresses must match.');
       return;
     }
-    if (!form.haBaseUrl.trim() || !form.haLongLivedToken.trim()) {
-      setError('Enter the Dinodia Hub address and token.');
+    if (
+      !form.haBaseUrl.trim() ||
+      !form.haLongLivedToken.trim() ||
+      !form.haUsername.trim() ||
+      !form.haPassword.trim()
+    ) {
+      setError('Scan the Dinodia Hub QR code to fill in the hub details.');
       return;
     }
 
@@ -180,9 +313,9 @@ export function SetupHomeScreen() {
           username: form.username.trim(),
           password: form.password,
           email: form.email.trim(),
-          haBaseUrl: form.haBaseUrl.trim(),
-          haUsername: DEFAULT_HA_USERNAME,
-          haPassword: DEFAULT_HA_PASSWORD,
+          haBaseUrl: normalizeBaseUrl(form.haBaseUrl),
+          haUsername: form.haUsername.trim(),
+          haPassword: form.haPassword,
           haLongLivedToken: form.haLongLivedToken.trim(),
           deviceId: identity.deviceId,
           deviceLabel: identity.deviceLabel,
@@ -223,7 +356,21 @@ export function SetupHomeScreen() {
     try {
       const result = await QrScanner.open();
       if (typeof result === 'string' && result.trim().length > 0) {
-        updateField('haLongLivedToken', result.trim());
+        const parsed = parseHubQrPayload(result);
+        if (!parsed) {
+          setScanError('QR code not recognized. Please scan the Dinodia Hub QR.');
+        } else {
+          if (
+            !parsed.haBaseUrl ||
+            !parsed.haLongLivedToken ||
+            !parsed.haUsername ||
+            !parsed.haPassword
+          ) {
+            setScanError('QR code is missing hub details. Please scan the Dinodia Hub QR.');
+          }
+          await applyHubDetails(parsed);
+          setShowHubDetails(false);
+        }
       } else {
         setScanError('No QR code was detected.');
       }
@@ -235,6 +382,15 @@ export function SetupHomeScreen() {
     } finally {
       setScanning(false);
     }
+  };
+
+  const handleVerifyHub = async () => {
+    if (!form.haBaseUrl.trim() || !form.haLongLivedToken.trim()) {
+      setScanError('Enter the Dinodia Hub address and token first.');
+      setShowHubDetails(true);
+      return;
+    }
+    await verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
   };
 
   return (
@@ -296,33 +452,48 @@ export function SetupHomeScreen() {
               </View>
             </View>
 
-            <Text style={styles.sectionLabel}>
-              Dinodia Hub connection (Home Assistant local URL).
-            </Text>
-            <TextField
-              label="Dinodia Hub local address"
-              placeholder={DEFAULT_HA_BASE_URL}
-              autoCapitalize="none"
-              value={form.haBaseUrl}
-              onChangeText={(v) => updateField('haBaseUrl', v)}
-            />
-            <TextField
-              label="Dinodia Hub long-lived access token"
-              placeholder="Paste token"
-              secureTextEntry
-              secureToggle
-              autoCapitalize="none"
-              value={form.haLongLivedToken}
-              onChangeText={(v) => updateField('haLongLivedToken', v)}
-            />
-            <PrimaryButton
-              title={scanning ? 'Scanning…' : 'Scan QR code'}
-              onPress={handleScanQr}
-              variant="ghost"
-              style={styles.scanButton}
-              disabled={scanning}
-            />
-            {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
+            <View style={styles.hubSection}>
+              <Text style={styles.sectionLabel}>Dinodia Hub connection</Text>
+              <View style={styles.hubStatusRow}>
+                <View
+                  style={[
+                    styles.hubDot,
+                    hubStatus === 'detected'
+                      ? styles.hubDotDetected
+                      : hubStatus === 'failed'
+                      ? styles.hubDotFailed
+                      : hubStatus === 'checking'
+                      ? styles.hubDotChecking
+                      : styles.hubDotIdle,
+                  ]}
+                />
+                <Text style={styles.hubStatusText}>
+                  {hubStatus === 'detected'
+                    ? 'Dinodia Hub detected'
+                    : hubStatus === 'checking'
+                    ? 'Checking Dinodia Hub…'
+                    : hubStatus === 'failed'
+                    ? 'Hub unreachable. Check Wi-Fi and try again.'
+                    : 'Scan the Dinodia Hub QR code to auto-fill hub details.'}
+                </Text>
+              </View>
+
+              <PrimaryButton
+                title={scanning ? 'Scanning…' : 'Scan Dinodia Hub QR code'}
+                onPress={handleScanQr}
+                style={styles.scanButton}
+                disabled={scanning}
+              />
+              {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
+
+              <PrimaryButton
+                title="Check hub status"
+                onPress={handleVerifyHub}
+                variant="ghost"
+                style={styles.verifyButton}
+                disabled={hubStatus === 'checking'}
+              />
+            </View>
 
             <PrimaryButton
               title={loading ? 'Connecting Dinodia Hub…' : 'Connect your Dinodia Hub'}
@@ -395,6 +566,14 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: spacing.md },
   fieldWrap: { flex: 1 },
   sectionLabel: { color: palette.textMuted, fontSize: 12 },
+  hubSection: { gap: spacing.sm },
+  hubStatusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  hubStatusText: { color: palette.textMuted, flex: 1 },
+  hubDot: { width: 10, height: 10, borderRadius: 9999, backgroundColor: palette.textMuted },
+  hubDotIdle: { backgroundColor: palette.textMuted },
+  hubDotChecking: { backgroundColor: palette.primary },
+  hubDotDetected: { backgroundColor: palette.success },
+  hubDotFailed: { backgroundColor: palette.danger },
   footer: { alignItems: 'center', marginTop: spacing.lg },
   footerText: { color: palette.textMuted, fontSize: 12 },
   errorText: { color: palette.danger, marginBottom: spacing.sm },
@@ -409,5 +588,6 @@ const styles = StyleSheet.create({
   cardTitle: { ...typography.heading, marginBottom: 4 },
   cardSub: { color: palette.textMuted, marginBottom: spacing.sm },
   scanButton: { alignSelf: 'flex-start' },
+  verifyButton: { alignSelf: 'flex-start' },
   scanError: { color: palette.danger, fontSize: 12 },
 });
