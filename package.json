@@ -8,7 +8,9 @@
     "ios": "react-native run-ios",
     "start": "react-native start",
     "test": "jest",
-    "build-android-release": "cd android && ./gradlew assembleRelease"
+    "build-android-release": "cd android && ./gradlew assembleRelease",
+    "label-registry:sync": "node scripts/labelRegistry.js sync",
+    "label-registry:check": "node scripts/labelRegistry.js check"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^1.23.0",
