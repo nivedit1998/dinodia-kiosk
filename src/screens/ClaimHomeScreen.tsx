@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   View,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
@@ -14,7 +14,7 @@ import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
-import { palette, radii, shadows, spacing, typography } from '../ui/theme';
+import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
@@ -251,171 +251,184 @@ export function ClaimHomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.brand}>Dinodia</Text>
-        <Text style={styles.subtitle}>Claim this home</Text>
+      <View style={styles.backdrop} pointerEvents="none">
+        <View style={[styles.glow, styles.glowTop]} />
+        <View style={[styles.glow, styles.glowBottom]} />
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.cardSub}>
-          Use the claim code from the previous homeowner to create your admin account.
-        </Text>
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {info ? <Text style={styles.infoText}>{info}</Text> : null}
-
-        {!awaitingVerification && step === 1 ? (
-          <View style={styles.form}>
-            <TextField
-              label="Claim code"
-              placeholder="DND-1234-5678-ABCD"
-              autoCapitalize="characters"
-              value={claimCode}
-              onChangeText={(value) => setClaimCode(formatClaimCode(value))}
-            />
-            <PrimaryButton
-              title={checkingCode ? 'Checking claim code…' : 'Continue'}
-              onPress={handleValidate}
-              disabled={checkingCode}
-              style={{ marginTop: spacing.md }}
-            />
-            <PrimaryButton
-              title="Back to Login"
-              onPress={() => navigation.goBack()}
-              variant="ghost"
-              style={{ marginTop: spacing.xs }}
-            />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <View style={styles.content}>
+          <View style={styles.hero}>
+            <View style={styles.pill}>
+              <View style={styles.pillDot} />
+              <Text style={styles.pillText}>Ownership transfer</Text>
+            </View>
+            <Text style={styles.brand}>Dinodia</Text>
+            <Text style={styles.subtitle}>Claim this home</Text>
           </View>
-        ) : null}
 
-        {!awaitingVerification && step === 2 && claimContext ? (
-          <ScrollView contentContainerStyle={styles.form}>
-            <View style={styles.row}>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Portal username"
-                  placeholder="Your username"
-                  autoCapitalize="none"
-                  value={form.username}
-                  onChangeText={(v) => updateField('username', v)}
-                />
-              </View>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Portal password"
-                  placeholder="••••••••"
-                  secureTextEntry
-                  secureToggle
-                  autoCapitalize="none"
-                  value={form.password}
-                  onChangeText={(v) => updateField('password', v)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.row}>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Confirm password"
-                  placeholder="••••••••"
-                  secureTextEntry
-                  secureToggle
-                  autoCapitalize="none"
-                  value={form.confirmPassword}
-                  onChangeText={(v) => updateField('confirmPassword', v)}
-                />
-              </View>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Admin email"
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={form.email}
-                  onChangeText={(v) => updateField('email', v)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.row}>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Confirm email"
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={form.confirmEmail}
-                  onChangeText={(v) => updateField('confirmEmail', v)}
-                />
-              </View>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Home status"
-                  value={claimContext.homeStatus ?? 'Pending'}
-                  editable={false}
-                />
-              </View>
-            </View>
-
-            <PrimaryButton
-              title={loading ? 'Starting claim…' : 'Send verification email'}
-              onPress={handleSubmit}
-              disabled={loading}
-              style={{ marginTop: spacing.md }}
-            />
-            <View style={styles.inlineRow}>
-              <PrimaryButton
-                title="Change claim code"
-                onPress={() => {
-                  setStep(1);
-                  setClaimContext(null);
-                  setInfo(null);
-                  setError(null);
-                }}
-                variant="ghost"
-                style={styles.inlineButton}
-              />
-              <PrimaryButton
-                title="Back to Login"
-                onPress={() => navigation.goBack()}
-                variant="ghost"
-                style={styles.inlineButton}
-              />
-            </View>
-          </ScrollView>
-        ) : null}
-
-        {awaitingVerification ? (
-          <View style={styles.form}>
+          <View style={styles.card}>
             <Text style={styles.cardSub}>
-              Check your email and click the verification link. We’ll finish creating your admin
-              session on this device after approval.
+              Use the claim code from the previous homeowner to create your admin account.
             </Text>
-            <View style={styles.statusRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.statusText}>
-                {verifying ? 'Finishing setup…' : `Status: ${challengeStatus}`}
-              </Text>
-            </View>
-            <View style={styles.inlineRow}>
-              <PrimaryButton
-                title="Resend email"
-                onPress={() => void handleResend()}
-                variant="ghost"
-                style={styles.inlineButton}
-                disabled={verifying}
-              />
-              <PrimaryButton
-                title="Start over"
-                onPress={resetFlow}
-                variant="ghost"
-                style={styles.inlineButton}
-                disabled={verifying}
-              />
-            </View>
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {info ? <Text style={styles.infoText}>{info}</Text> : null}
+
+            {!awaitingVerification && step === 1 ? (
+              <View style={styles.form}>
+                <TextField
+                  label="Claim code"
+                  placeholder="DND-1234-5678-ABCD"
+                  autoCapitalize="characters"
+                  value={claimCode}
+                  onChangeText={(value) => setClaimCode(formatClaimCode(value))}
+                />
+                <PrimaryButton
+                  title={checkingCode ? 'Checking claim code…' : 'Continue'}
+                  onPress={handleValidate}
+                  disabled={checkingCode}
+                  style={{ marginTop: spacing.md }}
+                />
+                <PrimaryButton
+                  title="Back to Login"
+                  onPress={() => navigation.goBack()}
+                  variant="ghost"
+                  style={{ marginTop: spacing.xs }}
+                />
+              </View>
+            ) : null}
+
+            {!awaitingVerification && step === 2 && claimContext ? (
+              <View style={styles.form}>
+                <View style={styles.row}>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Portal username"
+                      placeholder="Your username"
+                      autoCapitalize="none"
+                      value={form.username}
+                      onChangeText={(v) => updateField('username', v)}
+                    />
+                  </View>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Portal password"
+                      placeholder="••••••••"
+                      secureTextEntry
+                      secureToggle
+                      autoCapitalize="none"
+                      value={form.password}
+                      onChangeText={(v) => updateField('password', v)}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.row}>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Confirm password"
+                      placeholder="••••••••"
+                      secureTextEntry
+                      secureToggle
+                      autoCapitalize="none"
+                      value={form.confirmPassword}
+                      onChangeText={(v) => updateField('confirmPassword', v)}
+                    />
+                  </View>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Admin email"
+                      placeholder="you@example.com"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={form.email}
+                      onChangeText={(v) => updateField('email', v)}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.row}>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Confirm email"
+                      placeholder="you@example.com"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={form.confirmEmail}
+                      onChangeText={(v) => updateField('confirmEmail', v)}
+                    />
+                  </View>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Home status"
+                      value={claimContext.homeStatus ?? 'Pending'}
+                      editable={false}
+                    />
+                  </View>
+                </View>
+
+                <PrimaryButton
+                  title={loading ? 'Starting claim…' : 'Send verification email'}
+                  onPress={handleSubmit}
+                  disabled={loading}
+                  style={{ marginTop: spacing.md }}
+                />
+                <View style={styles.inlineRow}>
+                  <PrimaryButton
+                    title="Change claim code"
+                    onPress={() => {
+                      setStep(1);
+                      setClaimContext(null);
+                      setInfo(null);
+                      setError(null);
+                    }}
+                    variant="ghost"
+                    style={styles.inlineButton}
+                  />
+                  <PrimaryButton
+                    title="Back to Login"
+                    onPress={() => navigation.goBack()}
+                    variant="ghost"
+                    style={styles.inlineButton}
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            {awaitingVerification ? (
+              <View style={styles.form}>
+                <Text style={styles.cardSub}>
+                  Check your email and click the verification link. We’ll finish creating your admin
+                  session on this device after approval.
+                </Text>
+                <View style={styles.statusRow}>
+                  <ActivityIndicator size="small" color={palette.primary} />
+                  <Text style={styles.statusText}>
+                    {verifying ? 'Finishing setup…' : `Status: ${challengeStatus}`}
+                  </Text>
+                </View>
+                <View style={styles.inlineRow}>
+                  <PrimaryButton
+                    title="Resend email"
+                    onPress={() => void handleResend()}
+                    variant="ghost"
+                    style={styles.inlineButton}
+                    disabled={verifying}
+                  />
+                  <PrimaryButton
+                    title="Start over"
+                    onPress={resetFlow}
+                    variant="ghost"
+                    style={styles.inlineButton}
+                    disabled={verifying}
+                  />
+                </View>
+              </View>
+            ) : null}
           </View>
-        ) : null}
-      </View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -424,17 +437,62 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: palette.background,
-    paddingHorizontal: spacing.xl,
-    justifyContent: 'center',
   },
-  hero: { alignItems: 'center', marginBottom: spacing.lg },
-  brand: { fontSize: 30, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 15 },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+  },
+  glow: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: 200,
+    backgroundColor: '#c3d7ff',
+    opacity: 0.35,
+  },
+  glowTop: { top: -60, left: -40 },
+  glowBottom: { bottom: -40, right: -40, backgroundColor: '#d6f5ff' },
+  pageContent: {
+    flexGrow: 1,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+  },
+  hero: { alignItems: 'center', marginBottom: spacing.lg, gap: spacing.sm },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: palette.surface,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  pillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 99,
+    backgroundColor: palette.primary,
+    marginRight: spacing.xs,
+  },
+  pillText: { color: palette.textMuted, fontWeight: '700' },
+  brand: { fontSize: 32, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
+  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,
     padding: spacing.xl,
-    ...shadows.medium,
+    width: '100%',
+    maxWidth: maxContentWidth,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    ...shadows.soft,
   },
   cardSub: { color: palette.textMuted, marginBottom: spacing.md },
   form: { gap: spacing.md },

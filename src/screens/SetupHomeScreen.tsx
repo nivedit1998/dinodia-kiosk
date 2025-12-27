@@ -3,10 +3,10 @@ import {
   ActivityIndicator,
   NativeModules,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   View,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
@@ -16,10 +16,9 @@ import { verifyHaCloudConnection } from '../api/ha';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
-import { palette, radii, shadows, spacing, typography } from '../ui/theme';
+import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
-
 
 type HubDetails = {
   haBaseUrl?: string;
@@ -87,6 +86,7 @@ export function SetupHomeScreen() {
   const navigation = useNavigation<any>();
   const { setSession } = useSession();
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hubCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [form, setForm] = useState({
     username: '',
@@ -384,164 +384,192 @@ export function SetupHomeScreen() {
     }
   };
 
-  const handleVerifyHub = async () => {
-    if (!form.haBaseUrl.trim() || !form.haLongLivedToken.trim()) {
-      setScanError('Enter the Dinodia Hub address and token first.');
-      setShowHubDetails(true);
+  useEffect(() => {
+    if (!hubDetected) {
+      if (hubCheckRef.current) {
+        clearInterval(hubCheckRef.current);
+        hubCheckRef.current = null;
+      }
       return;
     }
-    await verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
-  };
+
+    if (hubStatus === 'detected') {
+      if (hubCheckRef.current) {
+        clearInterval(hubCheckRef.current);
+        hubCheckRef.current = null;
+      }
+      return;
+    }
+
+    const checkHub = () => verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
+    void checkHub();
+
+    hubCheckRef.current = setInterval(() => {
+      void checkHub();
+    }, 5000);
+
+    return () => {
+      if (hubCheckRef.current) {
+        clearInterval(hubCheckRef.current);
+        hubCheckRef.current = null;
+      }
+    };
+  }, [hubDetected, hubStatus, form.haBaseUrl, form.haLongLivedToken, verifyHubReachability]);
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.brand}>Dinodia</Text>
-        <Text style={styles.subtitle}>Set up this home</Text>
+      <View style={styles.backdrop} pointerEvents="none">
+        <View style={[styles.glow, styles.glowTop]} />
+        <View style={[styles.glow, styles.glowBottom]} />
       </View>
 
-      <View style={styles.card}>
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {info ? <Text style={styles.infoText}>{info}</Text> : null}
-
-        {!awaitingVerification ? (
-          <ScrollView contentContainerStyle={styles.form}>
-            <View style={styles.row}>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Set Username"
-                  placeholder="Your username"
-                  autoCapitalize="none"
-                  value={form.username}
-                  onChangeText={(v) => updateField('username', v)}
-                />
-              </View>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Set Password"
-                  placeholder="••••••••"
-                  secureTextEntry
-                  secureToggle
-                  autoCapitalize="none"
-                  value={form.password}
-                  onChangeText={(v) => updateField('password', v)}
-                />
-              </View>
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <View style={styles.content}>
+          <View style={styles.hero}>
+            <View style={styles.pill}>
+              <View style={styles.pillDot} />
+              <Text style={styles.pillText}>New home setup</Text>
             </View>
+            <Text style={styles.brand}>Dinodia</Text>
+            <Text style={styles.subtitle}>Set up this home</Text>
+          </View>
 
-            <View style={styles.row}>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Admin email"
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={form.email}
-                  onChangeText={(v) => updateField('email', v)}
+          <View style={styles.card}>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {info ? <Text style={styles.infoText}>{info}</Text> : null}
+
+            {!awaitingVerification ? (
+              <View style={styles.form}>
+                <View style={styles.row}>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Set Username"
+                      placeholder="Your username"
+                      autoCapitalize="none"
+                      value={form.username}
+                      onChangeText={(v) => updateField('username', v)}
+                    />
+                  </View>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Set Password"
+                      placeholder="••••••••"
+                      secureTextEntry
+                      secureToggle
+                      autoCapitalize="none"
+                      value={form.password}
+                      onChangeText={(v) => updateField('password', v)}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.row}>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Admin email"
+                      placeholder="you@example.com"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={form.email}
+                      onChangeText={(v) => updateField('email', v)}
+                    />
+                  </View>
+                  <View style={styles.fieldWrap}>
+                    <TextField
+                      label="Confirm email"
+                      placeholder="you@example.com"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      value={form.confirmEmail}
+                      onChangeText={(v) => updateField('confirmEmail', v)}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.hubSection}>
+                  <Text style={styles.sectionLabel}>Dinodia Hub connection</Text>
+                  <View style={styles.hubStatusRow}>
+                    <View
+                      style={[
+                        styles.hubDot,
+                        hubStatus === 'detected'
+                          ? styles.hubDotDetected
+                          : hubStatus === 'failed'
+                          ? styles.hubDotFailed
+                          : hubStatus === 'checking'
+                          ? styles.hubDotChecking
+                          : styles.hubDotIdle,
+                      ]}
+                    />
+                    <Text style={styles.hubStatusText}>
+                      {hubStatus === 'detected'
+                        ? 'Dinodia Hub detected'
+                        : hubStatus === 'checking'
+                        ? 'Checking Dinodia Hub…'
+                        : hubStatus === 'failed'
+                        ? 'Hub unreachable. Check Wi-Fi and try again.'
+                        : 'Scan the Dinodia Hub QR code to auto-fill hub details.'}
+                    </Text>
+                  </View>
+
+                  <PrimaryButton
+                    title={scanning ? 'Scanning…' : 'Scan Dinodia Hub QR code'}
+                    onPress={handleScanQr}
+                    style={styles.scanButton}
+                    disabled={scanning}
+                  />
+                  {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
+                </View>
+
+                <PrimaryButton
+                  title={loading ? 'Connecting Dinodia Hub…' : 'Connect your Dinodia Hub'}
+                  onPress={handleSubmit}
+                  disabled={loading}
+                  style={{ marginTop: spacing.md }}
+                />
+                <PrimaryButton
+                  title="Back to Login"
+                  onPress={() => navigation.goBack()}
+                  variant="ghost"
+                  style={{ marginTop: spacing.xs }}
+                  disabled={loading}
                 />
               </View>
-              <View style={styles.fieldWrap}>
-                <TextField
-                  label="Confirm email"
-                  placeholder="you@example.com"
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  value={form.confirmEmail}
-                  onChangeText={(v) => updateField('confirmEmail', v)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.hubSection}>
-              <Text style={styles.sectionLabel}>Dinodia Hub connection</Text>
-              <View style={styles.hubStatusRow}>
-                <View
-                  style={[
-                    styles.hubDot,
-                    hubStatus === 'detected'
-                      ? styles.hubDotDetected
-                      : hubStatus === 'failed'
-                      ? styles.hubDotFailed
-                      : hubStatus === 'checking'
-                      ? styles.hubDotChecking
-                      : styles.hubDotIdle,
-                  ]}
-                />
-                <Text style={styles.hubStatusText}>
-                  {hubStatus === 'detected'
-                    ? 'Dinodia Hub detected'
-                    : hubStatus === 'checking'
-                    ? 'Checking Dinodia Hub…'
-                    : hubStatus === 'failed'
-                    ? 'Hub unreachable. Check Wi-Fi and try again.'
-                    : 'Scan the Dinodia Hub QR code to auto-fill hub details.'}
+            ) : (
+              <>
+                <Text style={styles.cardTitle}>Verify this device</Text>
+                <Text style={styles.cardSub}>
+                  Check your email and tap the verification link to finish setup.
                 </Text>
-              </View>
+                <View style={styles.statusRow}>
+                  <ActivityIndicator size="small" color={palette.primary} />
+                  <Text style={styles.statusText}>
+                    {verifying ? 'Finishing setup…' : `Status: ${challengeStatus}`}
+                  </Text>
+                </View>
+                <PrimaryButton
+                  title="Resend email"
+                  onPress={() => void handleResend()}
+                  variant="ghost"
+                  style={{ marginTop: spacing.sm }}
+                  disabled={verifying}
+                />
+                <PrimaryButton
+                  title="Start over"
+                  onPress={resetVerification}
+                  variant="ghost"
+                  style={{ marginTop: spacing.xs }}
+                  disabled={verifying}
+                />
+              </>
+            )}
+          </View>
 
-              <PrimaryButton
-                title={scanning ? 'Scanning…' : 'Scan Dinodia Hub QR code'}
-                onPress={handleScanQr}
-                style={styles.scanButton}
-                disabled={scanning}
-              />
-              {scanError ? <Text style={styles.scanError}>{scanError}</Text> : null}
-
-              <PrimaryButton
-                title="Check hub status"
-                onPress={handleVerifyHub}
-                variant="ghost"
-                style={styles.verifyButton}
-                disabled={hubStatus === 'checking'}
-              />
-            </View>
-
-            <PrimaryButton
-              title={loading ? 'Connecting Dinodia Hub…' : 'Connect your Dinodia Hub'}
-              onPress={handleSubmit}
-              disabled={loading}
-              style={{ marginTop: spacing.md }}
-            />
-            <PrimaryButton
-              title="Back to Login"
-              onPress={() => navigation.goBack()}
-              variant="ghost"
-              style={{ marginTop: spacing.xs }}
-              disabled={loading}
-            />
-          </ScrollView>
-        ) : (
-          <>
-            <Text style={styles.cardTitle}>Verify this device</Text>
-            <Text style={styles.cardSub}>
-              Check your email and tap the verification link to finish setup.
-            </Text>
-            <View style={styles.statusRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.statusText}>
-                {verifying ? 'Finishing setup…' : `Status: ${challengeStatus}`}
-              </Text>
-            </View>
-            <PrimaryButton
-              title="Resend email"
-              onPress={() => void handleResend()}
-              variant="ghost"
-              style={{ marginTop: spacing.sm }}
-              disabled={verifying}
-            />
-            <PrimaryButton
-              title="Start over"
-              onPress={resetVerification}
-              variant="ghost"
-              style={{ marginTop: spacing.xs }}
-              disabled={verifying}
-            />
-          </>
-        )}
-      </View>
-
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>First-time setup for a new home</Text>
-      </View>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>First-time setup for a new home</Text>
+          </View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -550,17 +578,62 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: palette.background,
-    paddingHorizontal: spacing.xl,
-    justifyContent: 'center',
   },
-  hero: { alignItems: 'center', marginBottom: spacing.lg },
-  brand: { fontSize: 30, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 15 },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+  },
+  glow: {
+    position: 'absolute',
+    width: 340,
+    height: 340,
+    borderRadius: 200,
+    backgroundColor: '#c7ddff',
+    opacity: 0.35,
+  },
+  glowTop: { top: -80, left: -40 },
+  glowBottom: { bottom: -50, right: -60, backgroundColor: '#c8fff4' },
+  pageContent: {
+    flexGrow: 1,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+  },
+  hero: { alignItems: 'center', marginBottom: spacing.lg, gap: spacing.sm },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: palette.surface,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  pillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 99,
+    backgroundColor: palette.primary,
+    marginRight: spacing.xs,
+  },
+  pillText: { color: palette.textMuted, fontWeight: '700' },
+  brand: { fontSize: 32, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
+  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,
     padding: spacing.xl,
-    ...shadows.medium,
+    width: '100%',
+    maxWidth: maxContentWidth,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    ...shadows.soft,
   },
   form: { gap: spacing.md },
   row: { flexDirection: 'row', gap: spacing.md },
@@ -588,6 +661,5 @@ const styles = StyleSheet.create({
   cardTitle: { ...typography.heading, marginBottom: 4 },
   cardSub: { color: palette.textMuted, marginBottom: spacing.sm },
   scanButton: { alignSelf: 'flex-start' },
-  verifyButton: { alignSelf: 'flex-start' },
   scanError: { color: palette.danger, fontSize: 12 },
 });

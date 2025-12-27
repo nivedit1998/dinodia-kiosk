@@ -19,6 +19,7 @@ export function PrimaryButton({ title, onPress, disabled, variant = 'primary', s
       : 'transparent';
   const borderColor = variant === 'ghost' ? palette.outline : 'transparent';
   const textColor = variant === 'ghost' ? palette.text : '#fff';
+  const elevation = variant === 'ghost' ? null : shadows.soft;
 
   return (
     <TouchableOpacity
@@ -28,29 +29,37 @@ export function PrimaryButton({ title, onPress, disabled, variant = 'primary', s
       style={[
         styles.button,
         {
-          backgroundColor: disabled ? '#cbd5e1' : background,
+          backgroundColor: disabled
+            ? variant === 'ghost'
+              ? palette.surfaceMuted
+              : '#cbd5e1'
+            : background,
           borderColor,
-          opacity: disabled ? 0.8 : 1,
+          opacity: disabled ? 0.9 : 1,
         },
+        elevation,
         style,
       ]}
     >
-      <Text style={[styles.title, { color: disabled ? '#e2e8f0' : textColor }]}>{title}</Text>
+      <Text style={[styles.title, { color: disabled ? '#94a3b8' : textColor }]}>{title}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    paddingVertical: spacing.md,
+    minHeight: 54,
+    minWidth: 180,
+    alignSelf: 'stretch',
+    paddingVertical: spacing.md + 2,
+    paddingHorizontal: spacing.xl,
     borderRadius: radii.pill,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.soft,
   },
   title: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
 });

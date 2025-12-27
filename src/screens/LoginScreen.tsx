@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   TouchableOpacity,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -21,7 +22,7 @@ import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
-import { palette, radii, shadows, spacing, typography } from '../ui/theme';
+import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 
@@ -233,122 +234,140 @@ export function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.hero}>
-        <Text style={styles.brand}>Dinodia</Text>
-        <Text style={styles.subtitle}>Smart Living • Beautifully simple</Text>
+      <View style={styles.backdrop} pointerEvents="none">
+        <View style={[styles.glow, styles.glowTop]} />
+        <View style={[styles.glow, styles.glowBottom]} />
       </View>
 
-      <View style={styles.card}>
-        {challengeId ? (
-          <>
-            <Text style={styles.cardTitle}>Verify this device</Text>
-            <Text style={styles.cardSub}>
-              We sent a verification link to your email. Tap the link to finish signing in.
-            </Text>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.content}>
+          <View style={styles.hero}>
+            <View style={styles.pill}>
+              <View style={styles.pillDot} />
+              <Text style={styles.pillText}>Kiosk ready</Text>
+            </View>
+            <Text style={styles.brand}>Dinodia</Text>
+            <Text style={styles.subtitle}>Smart Living. Quietly confident.</Text>
+          </View>
 
-            <View style={styles.statusRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.statusText}>{verificationStatusLabel()}</Text>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>
+                {challengeId ? 'Verify this device' : 'Welcome back'}
+              </Text>
+              {!challengeId ? (
+                <Text style={styles.cardHint}>Sign in to open the home view.</Text>
+              ) : null}
             </View>
 
-            {verificationError ? (
-              <Text style={styles.errorText}>{verificationError}</Text>
-            ) : null}
+            {challengeId ? (
+              <>
+                <Text style={styles.cardSub}>
+                  We sent a verification link to your email. Tap the link to finish signing in.
+                </Text>
 
-            <PrimaryButton
-              title="Resend email"
-              onPress={() => {
-                void handleResend();
-              }}
-              variant="ghost"
-              style={{ marginTop: spacing.sm }}
-              disabled={verifying}
-            />
+                <View style={styles.statusRow}>
+                  <ActivityIndicator size="small" color={palette.primary} />
+                  <Text style={styles.statusText}>{verificationStatusLabel()}</Text>
+                </View>
 
-            <PrimaryButton
-              title="Back to login"
-              onPress={resetVerification}
-              variant="ghost"
-              style={{ marginTop: spacing.xs }}
-              disabled={verifying}
-            />
-          </>
-        ) : (
-          <>
-            <Text style={styles.cardTitle}>Welcome back</Text>
-            <Text style={styles.cardSub}>Control your home in one glance.</Text>
+                {verificationError ? (
+                  <Text style={styles.errorText}>{verificationError}</Text>
+                ) : null}
 
-            <TextField
-              label="Username"
-              placeholder="you@example.com"
-              autoCapitalize="none"
-              value={username}
-              onChangeText={setUsername}
-              keyboardType="email-address"
-            />
+                <PrimaryButton
+                  title="Resend email"
+                  onPress={() => {
+                    void handleResend();
+                  }}
+                  variant="ghost"
+                  style={{ marginTop: spacing.sm }}
+                  disabled={verifying}
+                />
 
-            <TextField
-              label="Password"
-              placeholder="••••••••"
-              secureTextEntry
-              secureToggle
-              autoCapitalize="none"
-              value={password}
-              onChangeText={setPassword}
-            />
+                <PrimaryButton
+                  title="Back to login"
+                  onPress={resetVerification}
+                  variant="ghost"
+                  style={{ marginTop: spacing.xs }}
+                  disabled={verifying}
+                />
+              </>
+            ) : (
+              <>
+                <TextField
+                  label="Username"
+                  placeholder="you@example.com"
+                  autoCapitalize="none"
+                  value={username}
+                  onChangeText={setUsername}
+                  keyboardType="email-address"
+                />
 
-            {needsEmail ? (
-              <TextField
-                label="Email"
-                placeholder="you@example.com"
-                autoCapitalize="none"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-              />
-            ) : null}
+                <TextField
+                  label="Password"
+                  placeholder="••••••••"
+                  secureTextEntry
+                  secureToggle
+                  autoCapitalize="none"
+                  value={password}
+                  onChangeText={setPassword}
+                />
 
-            <PrimaryButton
-              title={loading ? 'Logging in…' : 'Login'}
-              onPress={() => {
-                void handleLogin();
-              }}
-              disabled={loading || verifying}
-              style={{ marginTop: spacing.md }}
-            />
+                {needsEmail ? (
+                  <TextField
+                    label="Email"
+                    placeholder="you@example.com"
+                    autoCapitalize="none"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                  />
+                ) : null}
 
-            <TouchableOpacity
-              style={styles.wifiButton}
-              onPress={handleOpenWifiSetup}
-              activeOpacity={0.85}
-              disabled={loading || verifying}
-            >
-              <Text style={styles.wifiText}>Set up Wi-Fi</Text>
-            </TouchableOpacity>
+                <PrimaryButton
+                  title={loading ? 'Logging in…' : 'Login'}
+                  onPress={() => {
+                    void handleLogin();
+                  }}
+                  disabled={loading || verifying}
+                  style={{ marginTop: spacing.md }}
+                />
 
-            <View style={styles.ctaGroup}>
-              <PrimaryButton
-                title="First time here? Set up this home"
-                onPress={() => navigation.navigate('SetupHome')}
-                variant="ghost"
-                style={styles.ctaButton}
-                disabled={loading || verifying}
-              />
-              <PrimaryButton
-                title="Claim a home (have a code?)"
-                onPress={() => navigation.navigate('ClaimHome')}
-                variant="ghost"
-                style={styles.ctaButton}
-                disabled={loading || verifying}
-              />
-            </View>
-          </>
-        )}
-      </View>
+                <TouchableOpacity
+                  style={styles.wifiButton}
+                  onPress={handleOpenWifiSetup}
+                  activeOpacity={0.85}
+                  disabled={loading || verifying}
+                >
+                  <Text style={styles.wifiText}>Set up Wi-Fi</Text>
+                </TouchableOpacity>
 
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>Optimized for 8” landscape tablets • 16:10</Text>
-      </View>
+                <View style={styles.ctaGroup}>
+                  <PrimaryButton
+                    title="First time here? Set up this home"
+                    onPress={() => navigation.navigate('SetupHome')}
+                    variant="ghost"
+                    style={styles.ctaButton}
+                    disabled={loading || verifying}
+                  />
+                  <PrimaryButton
+                    title="Claim a home (have a code?)"
+                    onPress={() => navigation.navigate('ClaimHome')}
+                    variant="ghost"
+                    style={styles.ctaButton}
+                    disabled={loading || verifying}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Optimized for 8” landscape tablets • 16:10</Text>
+          </View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -357,31 +376,91 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: palette.background,
-    paddingHorizontal: spacing.xl,
-    justifyContent: 'center',
   },
-  hero: { alignItems: 'center', marginBottom: spacing.xl },
-  brand: { fontSize: 32, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 15 },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+  },
+  glow: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: 200,
+    backgroundColor: '#bcd7ff',
+    opacity: 0.35,
+  },
+  glowTop: {
+    top: -60,
+    left: -40,
+    transform: [{ scale: 1.1 }],
+  },
+  glowBottom: {
+    bottom: -40,
+    right: -30,
+    backgroundColor: '#c4f1ff',
+  },
+  hero: { alignItems: 'center', marginBottom: spacing.lg, gap: spacing.sm },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: palette.surface,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  pillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 99,
+    backgroundColor: palette.success,
+    marginRight: spacing.xs,
+  },
+  pillText: { color: palette.textMuted, fontWeight: '700' },
+  brand: { fontSize: 34, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
+  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,
     padding: spacing.xl,
-    ...shadows.medium,
+    width: '100%',
+    maxWidth: maxContentWidth,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    ...shadows.soft,
   },
-  cardTitle: { ...typography.heading, marginBottom: 4 },
-  cardSub: { color: palette.textMuted, marginBottom: spacing.lg },
+  cardHeader: {
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  },
+  cardTitle: { ...typography.heading },
+  cardHint: { color: palette.textMuted },
+  cardSub: { color: palette.textMuted, marginBottom: spacing.lg, lineHeight: 20 },
   wifiButton: {
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
     alignSelf: 'center',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
     borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.outline,
   },
-  wifiText: { color: palette.primary, fontWeight: '700' },
-  ctaGroup: { marginTop: spacing.md, gap: spacing.sm },
-  ctaButton: { paddingVertical: spacing.sm },
-  footer: { alignItems: 'center', marginTop: spacing.lg },
+  wifiText: { color: palette.text, fontWeight: '700' },
+  ctaGroup: { marginTop: spacing.lg, gap: spacing.sm },
+  ctaButton: { paddingVertical: spacing.md },
+  footer: { alignItems: 'center', marginTop: spacing.md },
   footerText: { color: palette.textMuted, fontSize: 12 },
   statusRow: {
     flexDirection: 'row',
