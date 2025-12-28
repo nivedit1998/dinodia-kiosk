@@ -23,6 +23,7 @@ type Props = {
   size?: DeviceCardSize;
   onAfterCommand?: () => Promise<void> | void;
   onOpenDetails?: (device: UIDevice) => void;
+  batteryPercent?: number | null;
 };
 
 export const DeviceCard = memo(function DeviceCard({
@@ -30,6 +31,7 @@ export const DeviceCard = memo(function DeviceCard({
   size = 'small',
   onAfterCommand,
   onOpenDetails,
+  batteryPercent = null,
 }: Props) {
   const label = getPrimaryLabel(device);
   const { session, haMode } = useSession();
@@ -40,6 +42,7 @@ export const DeviceCard = memo(function DeviceCard({
   const preset = useMemo(() => getDevicePreset(label), [label]);
   const active = useMemo(() => isDeviceActive(label, device), [label, device]);
   const secondaryText = useMemo(() => getSecondaryLine(device), [device]);
+  const batteryDisplay = useMemo(() => formatBatteryForTile(batteryPercent), [batteryPercent]);
   const attrs = device.attributes ?? {};
   const blindPosition = label === 'Blind' ? getBlindPosition(attrs as Record<string, unknown>) : null;
   const hasPending = pendingCommand !== null;
@@ -125,6 +128,22 @@ export const DeviceCard = memo(function DeviceCard({
     >
       <View style={styles.topRow}>
         <Text style={[styles.label, { color: active ? '#0f172a' : '#94a3b8' }]}>{label}</Text>
+        {batteryDisplay && (
+          <View
+            style={[
+              styles.batteryPill,
+              { backgroundColor: batteryDisplay.bg, alignSelf: 'flex-start' },
+            ]}
+          >
+            <Text
+              style={[styles.batteryText, { color: batteryDisplay.fg }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {batteryDisplay.text}
+            </Text>
+          </View>
+        )}
       </View>
       <View style={styles.body}>
         <Text style={[styles.name, nameStyle, { color: active ? '#0f172a' : '#94a3b8' }]}>
@@ -207,6 +226,30 @@ function primaryActionLabel(action: DeviceActionSpec, device: UIDevice): string 
     return action.label;
   }
   return 'Action';
+}
+
+function formatBatteryForTile(percent: number | null | undefined) {
+  if (percent == null || !Number.isFinite(percent)) return null;
+  const rounded = Math.round(percent);
+  if (rounded <= 0) {
+    return {
+      text: `Battery ${rounded}% • Change Batteries !`,
+      bg: 'rgba(248,113,113,0.2)',
+      fg: '#b91c1c',
+    };
+  }
+  if (rounded < 20) {
+    return {
+      text: `Battery ${rounded}% • Low Battery !`,
+      bg: 'rgba(251,191,36,0.2)',
+      fg: '#92400e',
+    };
+  }
+  return {
+    text: `Battery ${rounded}%`,
+    bg: 'rgba(226,232,240,0.7)',
+    fg: '#334155',
+  };
 }
 
 function getSecondaryLine(device: UIDevice): string {
@@ -336,6 +379,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
   label: {
     fontSize: 11,
@@ -344,6 +389,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.textMuted,
   },
+  batteryPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    maxWidth: '100%',
+  },
+  batteryText: { fontSize: 11, fontWeight: '700' },
   icon: { fontSize: 18, color: '#fff' },
   body: { marginTop: spacing.sm },
   name: { fontSize: 15, fontWeight: '700', color: palette.text },

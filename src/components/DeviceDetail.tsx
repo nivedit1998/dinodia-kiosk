@@ -30,6 +30,7 @@ import { useSession } from '../store/sessionStore';
 import { getDevicePreset, isDeviceActive } from './deviceVisuals';
 import { executeDeviceCommand } from '../devices/deviceExecutor';
 import { palette, radii, shadows, spacing } from '../ui/theme';
+import { fetchHomeModeSecrets } from '../api/haSecrets';
 
 type Props = {
   device: UIDevice | null;
@@ -53,6 +54,7 @@ export function DeviceDetail({
   const { session, haMode } = useSession();
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [cameraRefreshToken, setCameraRefreshToken] = useState<number>(Date.now());
+  const [cameraAuth, setCameraAuth] = useState<{ baseUrl: string; token: string } | null>(null);
 
   const label = device ? getPrimaryLabel(device) : null;
   const preset = useMemo(() => getDevicePreset(label), [label]);
@@ -71,12 +73,42 @@ export function DeviceDetail({
     return;
   }, [label]);
 
-  const buildCameraUrl = (entityId: string) =>
-    connection
-      ? `${(haMode === 'cloud' ? connection.cloudUrl ?? '' : connection.baseUrl ?? '').replace(/\/+$/, '')}/api/camera_proxy/${encodeURIComponent(entityId)}?token=${encodeURIComponent(
-          connection.longLivedToken
-        )}&ts=${cameraRefreshToken}`
-      : '';
+  useEffect(() => {
+    let active = true;
+    if (!visible || !device) {
+      setCameraAuth(null);
+      return;
+    }
+    (async () => {
+      try {
+        const secrets = await fetchHomeModeSecrets();
+        if (haMode === 'cloud') {
+          if (active) setCameraAuth(null);
+          return;
+        }
+        const base = secrets.baseUrl;
+        if (!active) return;
+        if (!base || !secrets.longLivedToken) {
+          setCameraAuth(null);
+          return;
+        }
+        setCameraAuth({ baseUrl: base, token: secrets.longLivedToken });
+      } catch {
+        if (active) setCameraAuth(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [device, haMode, visible]);
+
+  const buildCameraSource = (entityId: string) =>
+    cameraAuth
+      ? {
+          uri: `${cameraAuth.baseUrl}/api/camera_proxy/${encodeURIComponent(entityId)}?ts=${cameraRefreshToken}`,
+          headers: { Authorization: `Bearer ${cameraAuth.token}` },
+        }
+      : { uri: '' };
 
   async function sendCommand(command: string, value?: number) {
     if (!device) return;
@@ -143,7 +175,7 @@ export function DeviceDetail({
               label,
               pendingCommand,
               onCommand: sendCommand,
-              cameraUrlBuilder: buildCameraUrl,
+              cameraSourceBuilder: buildCameraSource,
               relatedDevices,
             })}
           {device && sensors.length > 0 && (
@@ -163,7 +195,7 @@ function renderControls(opts: {
   label: string | null;
   pendingCommand: string | null;
   onCommand: (command: string, value?: number) => Promise<void>;
-  cameraUrlBuilder: (entityId: string) => string;
+  cameraSourceBuilder: (entityId: string) => { uri: string; headers?: Record<string, string> };
   relatedDevices?: UIDevice[];
 }) {
   const {
@@ -171,7 +203,7 @@ function renderControls(opts: {
     label,
     pendingCommand,
     onCommand,
-    cameraUrlBuilder,
+    cameraSourceBuilder,
     relatedDevices,
   } = opts;
   const state = (device.state ?? '').toString();
@@ -216,11 +248,11 @@ function renderControls(opts: {
   }
 
   if (label === 'Doorbell') {
-    const url = cameraUrlBuilder(device.entityId);
+    const source = cameraSourceBuilder(device.entityId);
     return (
       <View style={styles.section}>
         <View style={styles.cameraCard}>
-          <Image source={{ uri: url }} style={styles.cameraImage} resizeMode="cover" />
+          <Image source={source} style={styles.cameraImage} resizeMode="cover" />
         </View>
       </View>
     );
@@ -240,7 +272,11 @@ function renderControls(opts: {
         <View style={styles.cameraGrid}>
           {cams.map((cam) => (
             <View key={cam.entityId} style={styles.cameraTile}>
-              <Image source={{ uri: cameraUrlBuilder(cam.entityId) }} style={styles.cameraThumb} resizeMode="cover" />
+              <Image
+                source={cameraSourceBuilder(cam.entityId)}
+                style={styles.cameraThumb}
+                resizeMode="cover"
+              />
               <Text style={styles.cameraName} numberOfLines={1}>
                 {cam.name}
               </Text>
@@ -756,5 +792,13 @@ const styles = StyleSheet.create({
   },
   historyLabel: { color: palette.textMuted },
   historyValue: { color: palette.text, fontWeight: '700' },
+  closeBtn: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderColor: palette.outline,
+    backgroundColor: palette.surface,
+  },
+  closeText: { fontSize: 16, fontWeight: '700', color: palette.text },
   errorText: { color: '#ef4444' },
 });

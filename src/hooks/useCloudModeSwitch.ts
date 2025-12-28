@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
 import { checkHomeModeReachable, checkRemoteAccessEnabled } from '../api/remoteAccess';
-import type { HaConnection } from '../models/haConnection';
 
 type ResultState = 'idle' | 'checking' | 'success' | 'error';
 
@@ -8,10 +7,9 @@ type Options = {
   isCloud: boolean;
   onSwitchToCloud: () => void | Promise<void>;
   onSwitchToHome?: () => void | Promise<void>;
-  haConnection?: HaConnection | null;
 };
 
-export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome, haConnection }: Options) {
+export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome }: Options) {
   const [promptVisible, setPromptVisible] = useState(false);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<ResultState>('idle');
@@ -55,7 +53,7 @@ export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome, h
       }
     } else {
       try {
-        ok = haConnection ? await checkHomeModeReachable(haConnection) : false;
+        ok = await checkHomeModeReachable();
       } catch {
         ok = false;
       }
@@ -74,7 +72,7 @@ export function useCloudModeSwitch({ isCloud, onSwitchToCloud, onSwitchToHome, h
         }, 900);
       }
     }
-  }, [checking, haConnection, onSwitchToCloud, onSwitchToHome, targetMode]);
+  }, [checking, onSwitchToCloud, onSwitchToHome, targetMode]);
 
   return {
     promptVisible,

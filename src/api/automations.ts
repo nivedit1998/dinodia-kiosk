@@ -3,6 +3,7 @@ import { compileAutomationDraftToHaConfig } from '../automations/haCompiler';
 import type { HaMode } from './dinodia';
 import type { HaConnection } from '../models/haConnection';
 import { platformFetch } from './platformFetch';
+import { getHaConnectionForMode } from './haSecrets';
 
 export type AutomationSummary = {
   id: string;
@@ -40,11 +41,14 @@ function makeAutomationId() {
   return `dinodia_${time}${random}`.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
 }
 
-function resolveHa(conn: HaConnection | null | undefined, mode?: HaMode): HaConn | null {
-  if (!conn) return null;
-  const raw = mode === 'cloud' && conn.cloudUrl ? conn.cloudUrl : conn.baseUrl;
-  if (!raw) return null;
-  return { baseUrl: raw.replace(/\/+$/, ''), token: conn.longLivedToken };
+async function resolveHa(conn: HaConnection | null | undefined, mode?: HaMode): Promise<HaConn | null> {
+  const targetMode: HaMode = mode === 'cloud' ? 'cloud' : 'home';
+  try {
+    const ha = await getHaConnectionForMode(targetMode, conn ?? undefined);
+    return { baseUrl: ha.baseUrl.replace(/\/+$/, ''), token: ha.longLivedToken };
+  } catch {
+    return null;
+  }
 }
 
 async function haFetch(ha: HaConn, path: string, init: RequestInit = {}) {
@@ -204,7 +208,7 @@ function hasTemplates(node: any): boolean {
 }
 
 export async function listAutomations(opts: PlatformOpts = {}): Promise<AutomationSummary[]> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
+  const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const list = await maybeListAutomationsViaHa(ha);
   const enriched = await enrichAutomationsWithHaDetails(list, ha);
@@ -212,7 +216,7 @@ export async function listAutomations(opts: PlatformOpts = {}): Promise<Automati
 }
 
 export async function createAutomation(draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
+  const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const haConfig = compileAutomationDraftToHaConfig(draft);
   const id = (haConfig.id || makeAutomationId()).replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
@@ -232,7 +236,7 @@ export async function createAutomation(draft: AutomationDraft, opts: PlatformOpt
 }
 
 export async function updateAutomation(id: string, draft: AutomationDraft, opts: PlatformOpts = {}) {
-  const ha = resolveHa(opts.haConnection, opts.mode);
+  const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const haConfig = compileAutomationDraftToHaConfig({ ...draft, id });
   await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, {
@@ -242,7 +246,7 @@ export async function updateAutomation(id: string, draft: AutomationDraft, opts:
 }
 
 export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Promise<void> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
+  const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
     () => undefined
@@ -257,7 +261,7 @@ export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Pro
 }
 
 export async function setAutomationEnabled(id: string, enabled: boolean, opts: PlatformOpts = {}): Promise<void> {
-  const ha = resolveHa(opts.haConnection, opts.mode);
+  const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const service = enabled ? 'turn_on' : 'turn_off';
   await haFetch(ha, `/api/services/automation/${service}`, {

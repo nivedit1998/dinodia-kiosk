@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# native bundles (should be generated, never checked in)
+android*/**/assets/index.android.bundle

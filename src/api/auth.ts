@@ -36,6 +36,7 @@ type ChallengeCompleteResponse = {
   role?: Role;
   token?: string;
   error?: string;
+  stepUpApproved?: boolean;
 };
 
 const LOGIN_PATH = '/api/auth/mobile-login';
@@ -143,6 +144,29 @@ export async function completeChallenge(
       await setPlatformToken(data.token);
     }
     return { role: data.role, token: data.token };
+  }
+  throw new Error(
+    typeof data.error === 'string' && data.error.trim().length > 0
+      ? data.error
+      : 'We could not complete verification. Please try again.'
+  );
+}
+
+// For step-up flows that do NOT return role/token (e.g., remote access setup)
+export async function completeStepUpChallenge(
+  challengeId: string,
+  deviceId: string,
+  deviceLabel: string
+): Promise<void> {
+  const { data } = await platformFetch<ChallengeCompleteResponse>(
+    `${CHALLENGE_PATH}/${encodeURIComponent(challengeId)}/complete`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, deviceLabel }),
+    }
+  );
+  if (data.ok || data.stepUpApproved) {
+    return;
   }
   throw new Error(
     typeof data.error === 'string' && data.error.trim().length > 0

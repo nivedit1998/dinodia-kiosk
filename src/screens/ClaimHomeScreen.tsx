@@ -10,7 +10,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
 import { platformFetch } from '../api/platformFetch';
-import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
+import { fetchKioskContext } from '../api/dinodia';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
@@ -86,13 +86,9 @@ export function ClaimHomeScreen() {
     setClaimContext(null);
   };
 
-  const finalizeLogin = async (username: string, platformToken?: string | null) => {
-    const userRecord = await fetchUserByUsername(username);
-    if (!userRecord) {
-      throw new Error('We could not find your account. Please try again.');
-    }
+  const finalizeLogin = async (platformToken?: string | null) => {
+    const { user: userRecord, haConnection } = await fetchKioskContext();
     await clearAllDeviceCacheForUser(userRecord.id);
-    const { haConnection } = await getUserWithHaConnection(userRecord.id);
     await setSession(
       {
         user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
@@ -120,7 +116,7 @@ export function ClaimHomeScreen() {
             identity.deviceId,
             identity.deviceLabel
           );
-          await finalizeLogin(form.username.trim(), token);
+          await finalizeLogin(token);
           if (cancelled) return;
           resetFlow();
           return;

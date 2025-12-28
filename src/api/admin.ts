@@ -103,8 +103,13 @@ export async function deleteTenant(tenantId: number): Promise<void> {
   }
 }
 
-export async function fetchSellingCleanupTargets(): Promise<{ deviceIds: string[]; entityIds: string[] }> {
-  const { data } = await platformFetch<{ ok: boolean; targets?: { deviceIds: string[]; entityIds: string[] } }>(
+export async function fetchSellingCleanupTargets(): Promise<{ deviceIds: string[]; entityIds: string[]; automationIds: string[] }> {
+  const { data } = await platformFetch<{
+    ok: boolean;
+    targets?: { deviceIds: string[]; entityIds: string[] };
+    automationIds?: string[];
+    error?: string;
+  }>(
     '/api/admin/selling-property',
     {
       method: 'GET',
@@ -116,6 +121,7 @@ export async function fetchSellingCleanupTargets(): Promise<{ deviceIds: string[
   return {
     deviceIds: Array.isArray(data.targets.deviceIds) ? data.targets.deviceIds : [],
     entityIds: Array.isArray(data.targets.entityIds) ? data.targets.entityIds : [],
+    automationIds: Array.isArray(data.automationIds) ? data.automationIds : [],
   };
 }
 

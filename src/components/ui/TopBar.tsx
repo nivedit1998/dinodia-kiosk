@@ -6,7 +6,7 @@ import { palette, radii, shadows, spacing, maxContentWidth } from '../../ui/them
 type Props = {
   areaLabel?: string;
   mode: 'home' | 'cloud';
-  activeTab: 'dashboard' | 'automations' | 'homeSetup' | 'addDevices';
+  activeTab?: 'dashboard' | 'automations' | 'homeSetup' | 'addDevices' | null;
   onChangeTab: (key: 'dashboard' | 'automations' | 'homeSetup' | 'addDevices') => void;
   onPressMenu: () => void;
   onPressArea?: () => void;
@@ -85,6 +85,7 @@ export function TopBar({
           <SegmentedTabs
             tabs={resolvedTabs}
             activeKey={activeTab}
+            allowNone
             onChange={(k) => onChangeTab(k as 'dashboard' | 'automations' | 'homeSetup' | 'addDevices')}
           />
           <TouchableOpacity

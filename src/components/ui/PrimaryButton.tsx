@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, ViewStyle } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
 import { palette, radii, shadows, spacing } from '../../ui/theme';
 
 type Props = {
@@ -7,7 +7,7 @@ type Props = {
   onPress: () => void;
   disabled?: boolean;
   variant?: 'primary' | 'ghost' | 'danger';
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
 };
 
 export function PrimaryButton({ title, onPress, disabled, variant = 'primary', style }: Props) {

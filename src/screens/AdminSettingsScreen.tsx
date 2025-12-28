@@ -21,7 +21,6 @@ export function AdminSettingsScreen() {
 
   const [haUsername, setHaUsername] = useState(haInitial?.haUsername ?? '');
   const [haBaseUrl, setHaBaseUrl] = useState(haInitial?.baseUrl ?? '');
-  const [haCloudUrl, setHaCloudUrl] = useState(haInitial?.cloudUrl ?? '');
   const [haPassword, setHaPassword] = useState('');
   const [haToken, setHaToken] = useState('');
 
@@ -51,14 +50,12 @@ export function AdminSettingsScreen() {
         adminId: user.id,
         haUsername,
         haBaseUrl,
-        haCloudUrl,
         haPassword,
         haLongLivedToken: haToken,
       });
       Alert.alert('Updated', 'Dinodia Hub settings updated.');
       await setSession({ user, haConnection: updated });
-      setHaBaseUrl(updated.baseUrl);
-      setHaCloudUrl(updated.cloudUrl ?? '');
+      setHaBaseUrl(updated.baseUrl ?? '');
       setHaPassword('');
       setHaToken('');
     } catch (err) {
@@ -134,13 +131,12 @@ export function AdminSettingsScreen() {
             value={haBaseUrl}
             onChangeText={setHaBaseUrl}
           />
-          <TextField
-            label="Dinodia Cloud URL (Nabu Casa)"
-            placeholder="https://nabu.example.com"
-            value={haCloudUrl}
-            onChangeText={setHaCloudUrl}
-            autoCapitalize="none"
-          />
+          <View style={styles.remoteStatusRow}>
+            <Text style={styles.remoteStatusLabel}>Remote access</Text>
+            <Text style={styles.remoteStatusValue}>
+              {haInitial?.cloudEnabled ? 'Saved' : 'Not enabled'}
+            </Text>
+          </View>
           <TextField
             label="New Dinodia Hub password (optional)"
             placeholder="••••••••"
@@ -191,5 +187,18 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   helperText: { color: palette.textMuted, fontSize: 13, marginBottom: spacing.sm },
+  remoteStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.lg,
+    backgroundColor: palette.surfaceMuted,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  remoteStatusLabel: { color: palette.textMuted, fontSize: 13, fontWeight: '700' },
+  remoteStatusValue: { color: palette.text, fontSize: 13, fontWeight: '800' },
   secondaryButton: { alignSelf: 'flex-start', paddingHorizontal: spacing.md },
 });

@@ -38,6 +38,7 @@ import { useSession } from '../store/sessionStore';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { TopBar } from '../components/ui/TopBar';
+import { buildBatteryPercentByDeviceGroup, getBatteryPercentForDevice } from '../utils/deviceBattery';
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 import type { HaConnection } from '../models/haConnection';
@@ -72,6 +73,7 @@ function DashboardContent({
   const hideSensors = false; // Show sensors for all roles; tenants are already filtered by access rules.
   const persistAreaSelection = role === 'TENANT';
   const { devices, refreshing, error, refreshDevices, lastUpdated } = useDevices(userId, haMode);
+  const batteryByGroup = useMemo(() => buildBatteryPercentByDeviceGroup(devices), [devices]);
   const [loggingOut, setLoggingOut] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [selected, setSelected] = useState<UIDevice | null>(null);
@@ -197,6 +199,10 @@ function DashboardContent({
     [handleBackgroundRefresh]
   );
 
+  const handleManageDevices = useCallback(() => {
+    navigation.navigate(isAdmin ? 'ManageDevices' : 'ManageDevices');
+  }, [navigation, isAdmin]);
+
   const switchMode = useCallback(
     async (nextMode: HaMode) => {
       await clearDeviceCacheForUserAndMode(userId, nextMode).catch(() => undefined);
@@ -216,7 +222,6 @@ function DashboardContent({
     isCloud,
     onSwitchToCloud: () => switchMode('cloud'),
     onSwitchToHome: () => switchMode('home'),
-    haConnection,
   });
 
   const handleOpenWifiSetup = useCallback(() => {
@@ -256,6 +261,7 @@ function DashboardContent({
                         device={device}
                         isAdmin={isAdmin}
                         size={size}
+                        batteryPercent={getBatteryPercentForDevice(device, batteryByGroup)}
                         onAfterCommand={handleBackgroundRefresh}
                         onOpenDetails={handleOpenDetails}
                       />
@@ -444,6 +450,7 @@ function DashboardContent({
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onManageDevices={handleManageDevices}
         onRemoteAccess={
           isAdmin
             ? () => {

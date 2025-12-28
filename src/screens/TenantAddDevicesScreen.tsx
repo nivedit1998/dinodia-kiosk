@@ -16,7 +16,6 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { supabase } from '../api/supabaseClient';
 import type { HaConnectionLike } from '../api/ha';
 import { listHaStates } from '../api/ha';
 import { assignHaAreaToDevices } from '../api/haAreas';
@@ -38,6 +37,8 @@ import { HeaderMenu } from '../components/HeaderMenu';
 import { CloudModePrompt } from '../components/CloudModePrompt';
 import { TextField } from '../components/ui/TextField';
 import { TopBar } from '../components/ui/TopBar';
+import { fetchKioskContext } from '../api/dinodia';
+import { fetchHomeModeSecrets } from '../api/haSecrets';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useSession } from '../store/sessionStore';
@@ -146,17 +147,7 @@ export function TenantAddDevicesScreen() {
   const remoteAccess = useRemoteAccessStatus(haMode);
   const { wifiName, batteryLevel } = useDeviceStatus();
   const isCloud = haMode === 'cloud';
-  const resolvedHa = useMemo<HaConnectionLike | null>(() => {
-    const conn = session.haConnection;
-    if (!conn) return null;
-    const raw = haMode === 'cloud' ? conn.cloudUrl : conn.baseUrl;
-    const base = (raw ?? '').trim();
-    if (!base) return null;
-    return {
-      baseUrl: base.replace(/\/+$/, ''),
-      longLivedToken: conn.longLivedToken,
-    };
-  }, [haMode, session.haConnection]);
+  const [resolvedHa, setResolvedHa] = useState<HaConnectionLike | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [activeFlow, setActiveFlow] = useState<FlowType>(null);
 
@@ -203,13 +194,13 @@ export function TenantAddDevicesScreen() {
       setAreasLoading(true);
       setAreasError(null);
       try {
-        const { data, error: fetchError } = await supabase
-          .from('AccessRule')
-          .select('area')
-          .eq('userId', userId);
-        if (fetchError) throw fetchError;
+        const { user } = await fetchKioskContext();
         const list = Array.from(
-          new Set((data ?? []).map((row: { area: string }) => row.area).filter(Boolean))
+          new Set(
+            (user.accessRules ?? [])
+              .map((r: any) => (typeof r.area === 'string' ? r.area : null))
+              .filter(Boolean) as string[]
+          )
         ).sort((a, b) => a.localeCompare(b));
         if (!active) return;
         setAreas(list);
@@ -337,7 +328,7 @@ export function TenantAddDevicesScreen() {
 
   const finalizeCommissioning = useCallback(
     async (nextSession: MatterSession) => {
-      if (!resolvedHa || !session.haConnection) return;
+      if (!resolvedHa) return;
       const warningsList: string[] = [];
 
       let afterSnapshot: RegistrySnapshot | null = null;
@@ -355,31 +346,7 @@ export function TenantAddDevicesScreen() {
       }
 
       try {
-        const states = await listHaStates(resolvedHa);
-        const nameMap = new Map<string, string>();
-        for (const st of states) {
-          const entityId = st.entity_id;
-          const friendly =
-            typeof st.attributes?.friendly_name === 'string' && st.attributes.friendly_name.trim().length > 0
-              ? st.attributes.friendly_name.trim()
-              : entityId;
-          nameMap.set(entityId, friendly);
-        }
-        if (diff.newEntityIds.length > 0) {
-          const overrideRows = diff.newEntityIds.map((entityId) => ({
-            haConnectionId: session.haConnection!.id,
-            entityId,
-            name: requestedName.trim() || nameMap.get(entityId) || entityId,
-            area: selectedArea,
-            label: selectedType ?? null,
-          }));
-          const { error: upsertError } = await supabase.from('Device').upsert(overrideRows, {
-            onConflict: 'haConnectionId,entityId',
-          } as any);
-          if (upsertError) {
-            warningsList.push(upsertError.message || 'Could not save device overrides.');
-          }
-        }
+        await listHaStates(resolvedHa); // touch states to ensure HA reachable; overrides now handled server-side.
       } catch (err) {
         warningsList.push(
           err instanceof Error ? err.message : 'Could not update device overrides.'
@@ -387,7 +354,10 @@ export function TenantAddDevicesScreen() {
       }
 
       if (selectedHaLabelId) {
-        const labelResult = await applyHaLabel(resolvedHa, selectedHaLabelId, diff);
+        const labelResult = await applyHaLabel(resolvedHa, selectedHaLabelId, {
+          deviceIds: diff.newDeviceIds,
+          entityIds: diff.newEntityIds,
+        });
         if (!labelResult.ok && labelResult.warning) {
           warningsList.push(labelResult.warning);
         }
@@ -406,7 +376,7 @@ export function TenantAddDevicesScreen() {
         isFinal: true,
       });
     },
-    [resolvedHa, requestedName, selectedArea, selectedType, selectedHaLabelId, session.haConnection]
+    [resolvedHa, requestedName, selectedArea, selectedType, selectedHaLabelId]
   );
 
   const handleStartCommissioning = async () => {
@@ -561,8 +531,33 @@ export function TenantAddDevicesScreen() {
     isCloud,
     onSwitchToCloud: () => setHaMode('cloud'),
     onSwitchToHome: () => setHaMode('home'),
-    haConnection: session.haConnection,
   });
+
+  useEffect(() => {
+    let active = true;
+    if (!session.haConnection) {
+      setResolvedHa(null);
+      return;
+    }
+    (async () => {
+      try {
+        const secrets = await fetchHomeModeSecrets();
+        const base = secrets.baseUrl;
+        if (!base) {
+          if (active) setResolvedHa(null);
+          return;
+        }
+        if (active) {
+          setResolvedHa({ baseUrl: base, longLivedToken: secrets.longLivedToken });
+        }
+      } catch {
+        if (active) setResolvedHa(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [haMode, session.haConnection]);
 
   useEffect(() => {
     if (isCloud && remoteAccess.status === 'locked') {
@@ -941,6 +936,10 @@ export function TenantAddDevicesScreen() {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onManageDevices={() => {
+          setMenuVisible(false);
+          navigation.navigate('ManageDevices');
+        }}
       />
       <CloudModePrompt
         visible={cloudPromptVisible}

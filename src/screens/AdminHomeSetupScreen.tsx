@@ -31,8 +31,9 @@ import { maxContentWidth, palette, radii, spacing, typography } from '../ui/them
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
-import { callHaService, probeHaReachability, type HaConnectionLike } from '../api/ha';
+import { callHaService, listHaStates, probeHaReachability, type HaConnectionLike } from '../api/ha';
 import { haWsCall } from '../api/haWebSocket';
+import { fetchHomeModeSecrets, type HomeModeSecrets } from '../api/haSecrets';
 
 type SellingMode = 'FULL_RESET' | 'OWNER_TRANSFER';
 type TenantInfo = TenantRecord;
@@ -45,34 +46,51 @@ const { InlineWifiSetupLauncher } = NativeModules as {
 const MAX_REGISTRY_REMOVALS = 200;
 
 function buildHaCandidates(
-  haConnection: { baseUrl: string; cloudUrl?: string | null; longLivedToken: string }
+  secrets: HomeModeSecrets | null,
+  cloudUrl?: string | null
 ): HaConnectionLike[] {
+  if (!secrets) return [];
   const candidates: HaConnectionLike[] = [];
   const seen = new Set<string>();
-  const base = (haConnection.baseUrl || '').trim().replace(/\/+$/, '');
-  const cloud = (haConnection.cloudUrl || '').trim().replace(/\/+$/, '');
-  if (base) {
-    candidates.push({ baseUrl: base, longLivedToken: haConnection.longLivedToken });
-    seen.add(base);
+  const base = (secrets.baseUrl || '').trim().replace(/\/+$/, '');
+  const cloud = (cloudUrl || '').trim().replace(/\/+$/, '');
+  if (cloud) {
+    candidates.push({ baseUrl: cloud, longLivedToken: secrets.longLivedToken });
+    seen.add(cloud);
   }
-  if (cloud && !seen.has(cloud)) {
-    candidates.push({ baseUrl: cloud, longLivedToken: haConnection.longLivedToken });
+  if (base && !seen.has(base)) {
+    candidates.push({ baseUrl: base, longLivedToken: secrets.longLivedToken });
   }
   return candidates;
 }
 
 async function listHaAutomationIds(ha: HaConnectionLike): Promise<string[]> {
-  const url = `${ha.baseUrl.replace(/\/+$/, '')}/api/config/automation`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${ha.longLivedToken}` },
-  });
-  if (!res.ok) return [];
-  const json = await res.json().catch(() => []);
-  if (!Array.isArray(json)) return [];
-  return json
-    .map((a: any) => (typeof a?.id === 'string' ? a.id.trim() : ''))
-    .filter(Boolean);
+  const states = await listHaStates(ha).catch(() => []);
+  const automationEntities = states
+    .map((s) => (typeof (s as any)?.entity_id === 'string' ? String((s as any).entity_id) : ''))
+    .filter((id) => id.startsWith('automation.'))
+    .map((id) => id.trim())
+    .filter(Boolean)
+    // Keep notify automations; delete everything else.
+    .filter((id) => !id.toLowerCase().includes('notify'));
+
+  const ids: string[] = [];
+  for (const entityId of automationEntities) {
+    try {
+      const response = await haWsCall<{ config?: Record<string, unknown> }>(ha, 'automation/config', {
+        entity_id: entityId,
+      });
+      const cfg = response?.config ?? {};
+      const rawId = typeof (cfg as any).id === 'string' ? String((cfg as any).id).trim() : '';
+      const fallback = entityId.slice('automation.'.length);
+      ids.push(rawId || fallback);
+    } catch {
+      const fallback = entityId.slice('automation.'.length);
+      if (fallback) ids.push(fallback);
+    }
+  }
+
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
 }
 
 async function deleteHaAutomation(ha: HaConnectionLike, id: string) {
@@ -324,7 +342,8 @@ export function AdminHomeSetupScreen() {
   };
 
   const runLocalFullResetCleanup = useCallback(async () => {
-    if (!session.haConnection) {
+    const secrets = await fetchHomeModeSecrets().catch(() => null);
+    if (!secrets) {
       throw new Error('Dinodia Hub connection is not configured.');
     }
     setCleanupStep('Fetching cleanup targets…');
@@ -335,8 +354,9 @@ export function AdminHomeSetupScreen() {
     const entityIds = Array.isArray(targets.entityIds)
       ? targets.entityIds.filter((id) => typeof id === 'string' && id.trim()).slice(0, MAX_REGISTRY_REMOVALS)
       : [];
+    // We now delete all automations except those containing "notify", regardless of ownership list.
 
-    const candidates = buildHaCandidates(session.haConnection);
+    const candidates = buildHaCandidates(secrets, null);
     if (candidates.length === 0) {
       throw new Error('Dinodia Hub connection is missing.');
     }
@@ -350,9 +370,8 @@ export function AdminHomeSetupScreen() {
       }
       try {
         setCleanupStep('Removing Dinodia automations…');
-        const automationIds = await listHaAutomationIds(ha);
-        const dinodiaIds = automationIds.filter((id) => id.toLowerCase().startsWith('dinodia_'));
-        for (const id of dinodiaIds) {
+        const automationIdsToDelete = await listHaAutomationIds(ha);
+        for (const id of automationIdsToDelete) {
           await deleteHaAutomation(ha, id);
         }
 
@@ -394,7 +413,6 @@ export function AdminHomeSetupScreen() {
     isCloud,
     onSwitchToCloud: () => setHaMode('cloud'),
     onSwitchToHome: () => setHaMode('home'),
-    haConnection: session.haConnection,
   });
 
   const handleOpenWifiSetup = () => {
@@ -767,6 +785,10 @@ export function AdminHomeSetupScreen() {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onManageDevices={() => {
+          setMenuVisible(false);
+          navigation.navigate('ManageDevices' as never);
+        }}
         onRemoteAccess={() => {
           setMenuVisible(false);
           navigation.navigate('RemoteAccessSetup' as never);

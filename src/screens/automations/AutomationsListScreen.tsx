@@ -127,7 +127,6 @@ export function AutomationsListScreen({}: Props) {
     isCloud,
     onSwitchToCloud: () => switchMode('cloud'),
     onSwitchToHome: () => switchMode('home'),
-    haConnection: session.haConnection,
   });
 
   const handleOpenWifiSetup = useCallback(() => {
@@ -347,6 +346,10 @@ export function AutomationsListScreen({}: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onManageDevices={() => {
+          setMenuVisible(false);
+          navigation.navigate('ManageDevices' as never);
+        }}
         onRemoteAccess={
           isAdmin
             ? () => {

@@ -1,16 +1,19 @@
 // src/store/sessionStore.ts
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, NativeModules } from 'react-native';
+import NetInfo, { NetInfoStateType } from '@react-native-community/netinfo';
 import CookieManager from '@react-native-cookies/cookies';
 import type { AuthUser } from '../api/auth';
 import type { HaConnection } from '../models/haConnection';
 import { logoutRemote } from '../api/auth';
 import { clearPlatformCookie } from '../api/platformFetch';
 import { clearPlatformToken, getPlatformToken, setPlatformToken } from '../api/platformToken';
-import { supabase } from '../api/supabaseClient';
 import { clearTokens } from '../spotify/spotifyApi';
 import { loadJson, saveJson, removeKey } from '../utils/storage';
 import { clearAllDeviceCacheForUser } from './deviceStore';
+import { platformFetch } from '../api/platformFetch';
+import { clearHomeModeSecrets } from '../api/haSecrets';
+import { setOnSessionInvalid } from '../api/sessionInvalid';
 
 type Session = {
   user: AuthUser | null;
@@ -42,6 +45,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [haMode, setHaModeState] = useState<HaMode>('home');
   const resettingRef = useRef(false);
+  const lastConnectionType = useRef<NetInfoStateType | null>(null);
+  const lastWifiId = useRef<string | null>(null);
+  const lastWifiCheckMs = useRef(0);
 
   useEffect(() => {
     void (async () => {
@@ -78,6 +84,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         await CookieManager.flush().catch(() => undefined);
       }
       await removeKey(SESSION_KEY).catch(() => undefined);
+      clearHomeModeSecrets();
     } finally {
       setSessionState({ user: null, haConnection: null });
       setHaModeState('home');
@@ -90,18 +97,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!userId || loading) return;
     if (resettingRef.current) return;
 
-    const { data, error } = await supabase
-      .from('User')
-      .select('id')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (error) {
-      return;
-    }
-
-    if (!data) {
-      await resetToCleanSlate(userId);
+    try {
+      const { data } = await platformFetch<{ user: AuthUser | null }>('/api/auth/me', {
+        method: 'GET',
+      });
+      if (!data.user || data.user.id !== userId) {
+        await resetToCleanSlate(userId);
+      }
+    } catch {
+      // ignore transient errors; will retry on next check
     }
   };
 
@@ -110,9 +114,94 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [loading, session.user?.id]);
 
   useEffect(() => {
+    let mounted = true;
+    NetInfo.fetch()
+      .then((state) => {
+        if (mounted) {
+          lastConnectionType.current = state.type;
+          if (state.type === NetInfoStateType.wifi) {
+            const ssid = (state.details as any)?.ssid || (state.details as any)?.bssid || null;
+            lastWifiId.current = typeof ssid === 'string' && ssid.trim().length > 0 ? ssid.trim() : null;
+          }
+        }
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const previous = lastConnectionType.current;
+      const currentType = state.type;
+      lastConnectionType.current = currentType;
+
+      const now = Date.now();
+      const wifiDetailsSsid = (state.details as any)?.ssid || (state.details as any)?.bssid || null;
+      const wifiIdFromNetInfo =
+        typeof wifiDetailsSsid === 'string' && wifiDetailsSsid.trim().length > 0
+          ? wifiDetailsSsid.trim()
+          : null;
+
+      const updateLastWifiId = async () => {
+        // Throttle Wi-Fi ID checks to avoid rapid loops.
+        if (now - lastWifiCheckMs.current < 1000) return lastWifiId.current;
+        lastWifiCheckMs.current = now;
+        if (wifiIdFromNetInfo) {
+          lastWifiId.current = wifiIdFromNetInfo;
+          return lastWifiId.current;
+        }
+        // Fallback to native module SSID when NetInfo lacks SSID/BSSID.
+        try {
+          const { DeviceStatus } = NativeModules as any;
+          const ssid = DeviceStatus?.getWifiName ? await DeviceStatus.getWifiName() : null;
+          lastWifiId.current = typeof ssid === 'string' && ssid.trim().length > 0 ? ssid.trim() : null;
+          return lastWifiId.current;
+        } catch {
+          return lastWifiId.current;
+        }
+      };
+
+      const handleWifiChange = async () => {
+        if (!session.user?.id) return;
+
+        // Wi-Fi -> non-Wi-Fi: logout (existing behavior).
+        if (previous === NetInfoStateType.wifi && currentType !== NetInfoStateType.wifi) {
+          void resetToCleanSlate(session.user.id);
+          return;
+        }
+
+        // Wi-Fi -> Wi-Fi but different network: logout.
+        if (previous === NetInfoStateType.wifi && currentType === NetInfoStateType.wifi) {
+          const currentWifiId = await updateLastWifiId();
+          const prevWifiId = lastWifiId.current;
+          if (prevWifiId && currentWifiId && prevWifiId !== currentWifiId) {
+            void resetToCleanSlate(session.user.id);
+            return;
+          }
+          // If we have no fingerprint yet, just update without logging out.
+          return;
+        }
+
+        // First time establishing Wi-Fi.
+        if (currentType === NetInfoStateType.wifi && !lastWifiId.current) {
+          void updateLastWifiId();
+        }
+      };
+
+      void handleWifiChange();
+
+      if (!session.user?.id) return;
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [session.user?.id]);
+
+  useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void verifyUserStillExists();
+      } else {
+        clearHomeModeSecrets();
       }
     });
     return () => {
@@ -130,16 +219,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loading, session.user?.id]);
 
+  useEffect(() => {
+    // Hook platformFetch session-invalid into resetApp.
+    setOnSessionInvalid(async () => {
+      const uid = session.user?.id;
+      await resetToCleanSlate(uid);
+    });
+  }, [session.user?.id]);
+
   const setSession = async (s: Session, opts?: { platformToken?: string | null }) => {
     const previousUserId = session.user?.id;
+    const sanitizedHaConnection = s.haConnection
+      ? {
+          id: s.haConnection.id,
+          cloudEnabled: Boolean(s.haConnection.cloudEnabled),
+          ownerId: s.haConnection.ownerId,
+        }
+      : null;
+    const sanitizedSession: Session = { user: s.user, haConnection: sanitizedHaConnection };
     if (previousUserId && s.user?.id && previousUserId !== s.user.id) {
       await clearAllDeviceCacheForUser(previousUserId).catch(() => undefined);
       await clearPlatformToken().catch(() => undefined);
       await clearPlatformCookie().catch(() => undefined);
+      clearHomeModeSecrets();
     }
-    setSessionState(s);
+    setSessionState(sanitizedSession);
     setHaModeState('home');
-    await saveJson(SESSION_KEY, s);
+    await saveJson(SESSION_KEY, sanitizedSession);
     if (opts?.platformToken && typeof opts.platformToken === 'string' && opts.platformToken.trim().length > 0) {
       await setPlatformToken(opts.platformToken);
     }
@@ -152,6 +258,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await removeKey(SESSION_KEY);
     await clearPlatformToken().catch(() => undefined);
     await clearPlatformCookie().catch(() => undefined);
+    clearHomeModeSecrets();
     if (userId) {
       await clearAllDeviceCacheForUser(userId).catch(() => undefined);
     }

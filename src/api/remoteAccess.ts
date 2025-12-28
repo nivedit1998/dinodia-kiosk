@@ -1,7 +1,7 @@
 // src/api/remoteAccess.ts
 import { platformFetch } from './platformFetch';
-import type { HaConnection } from '../models/haConnection';
 import { probeHaReachability } from './ha';
+import { fetchHomeModeSecrets } from './haSecrets';
 
 type AlexaDevicesResponse = {
   devices?: unknown[];
@@ -16,10 +16,14 @@ export async function checkRemoteAccessEnabled(): Promise<boolean> {
   return devices.length > 0;
 }
 
-export async function checkHomeModeReachable(haConnection: HaConnection | null | undefined): Promise<boolean> {
-  if (!haConnection || !haConnection.baseUrl || !haConnection.longLivedToken) return false;
-  return probeHaReachability(
-    { baseUrl: haConnection.baseUrl, longLivedToken: haConnection.longLivedToken },
-    2000
-  );
+export async function checkHomeModeReachable(): Promise<boolean> {
+  try {
+    const secrets = await fetchHomeModeSecrets();
+    return probeHaReachability(
+      { baseUrl: secrets.baseUrl, longLivedToken: secrets.longLivedToken },
+      2000
+    );
+  } catch {
+    return false;
+  }
 }

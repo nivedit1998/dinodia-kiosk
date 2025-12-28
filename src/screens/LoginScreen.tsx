@@ -18,7 +18,7 @@ import {
   completeChallenge,
   resendChallenge,
 } from '../api/auth';
-import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
+import { fetchKioskContext } from '../api/dinodia';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
@@ -86,13 +86,9 @@ export function LoginScreen() {
     setNeedsEmail(false);
   };
 
-  const finalizeLogin = async (loginUsername: string, platformToken?: string | null) => {
-    const userRecord = await fetchUserByUsername(loginUsername);
-    if (!userRecord) {
-      throw new Error('We could not find your account. Please try again.');
-    }
+  const finalizeLogin = async (platformToken?: string | null) => {
+    const { user: userRecord, haConnection } = await fetchKioskContext();
     await clearAllDeviceCacheForUser(userRecord.id);
-    const { haConnection } = await getUserWithHaConnection(userRecord.id);
     await setSession(
       {
         user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
@@ -120,7 +116,7 @@ export function LoginScreen() {
             identity.deviceId,
             identity.deviceLabel
           );
-          await finalizeLogin(pendingUsername, token);
+          await finalizeLogin(token);
           if (cancelled) return;
           resetVerification();
           return;
@@ -184,7 +180,7 @@ export function LoginScreen() {
       });
 
       if (result.status === 'OK') {
-        await finalizeLogin(trimmedUsername, result.token);
+        await finalizeLogin(result.token);
         return;
       }
 

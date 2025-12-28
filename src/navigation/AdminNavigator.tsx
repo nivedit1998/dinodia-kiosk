@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AdminDashboardScreen } from '../screens/AdminDashboardScreen';
 import { AdminHomeSetupScreen } from '../screens/AdminHomeSetupScreen';
 import { AdminSettingsScreen } from '../screens/AdminSettingsScreen';
+import { ManageDevicesScreen } from '../screens/ManageDevicesScreen';
 import { AutomationsListScreen } from '../screens/automations/AutomationsListScreen';
 import { AutomationEditorScreen } from '../screens/automations/AutomationEditorScreen';
 import { RemoteAccessSetupScreen } from '../screens/RemoteAccessSetupScreen';
@@ -14,6 +15,7 @@ export type AdminStackParamList = {
   AdminSettings: undefined;
   AdminHomeSetup: undefined;
   RemoteAccessSetup: undefined;
+  ManageDevices: undefined;
 };
 
 export type AdminAutomationsStackParamList = {
@@ -37,6 +39,7 @@ function DashboardStackScreen() {
       <Stack.Screen name="AdminSettings" component={AdminSettingsScreen} />
       <Stack.Screen name="AdminHomeSetup" component={AdminHomeSetupScreen} />
       <Stack.Screen name="RemoteAccessSetup" component={RemoteAccessSetupScreen} />
+      <Stack.Screen name="ManageDevices" component={ManageDevicesScreen} />
     </Stack.Navigator>
   );
 }

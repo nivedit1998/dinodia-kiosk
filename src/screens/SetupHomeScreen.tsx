@@ -11,7 +11,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
 import { platformFetch } from '../api/platformFetch';
-import { fetchUserByUsername, getUserWithHaConnection } from '../api/dinodia';
+import { fetchKioskContext } from '../api/dinodia';
 import { verifyHaCloudConnection } from '../api/ha';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
@@ -177,12 +177,6 @@ export function SetupHomeScreen() {
     [verifyHubReachability]
   );
 
-  useEffect(() => {
-    if (hubDetected && hubStatus === 'idle') {
-      void verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
-    }
-  }, [form.haBaseUrl, form.haLongLivedToken, hubDetected, hubStatus, verifyHubReachability]);
-
   const hubDetected = useMemo(
     () =>
       form.haBaseUrl.trim().length > 0 &&
@@ -191,6 +185,12 @@ export function SetupHomeScreen() {
       form.haPassword.trim().length > 0,
     [form.haBaseUrl, form.haLongLivedToken, form.haPassword, form.haUsername]
   );
+
+  useEffect(() => {
+    if (hubDetected && hubStatus === 'idle') {
+      void verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
+    }
+  }, [form.haBaseUrl, form.haLongLivedToken, hubDetected, hubStatus, verifyHubReachability]);
 
   const resetVerification = () => {
     if (pollRef.current) {
@@ -203,13 +203,9 @@ export function SetupHomeScreen() {
     setInfo(null);
   };
 
-  const finalizeLogin = async (username: string, platformToken?: string | null) => {
-    const userRecord = await fetchUserByUsername(username);
-    if (!userRecord) {
-      throw new Error('We could not find your account. Please try again.');
-    }
+  const finalizeLogin = async (platformToken?: string | null) => {
+    const { user: userRecord, haConnection } = await fetchKioskContext();
     await clearAllDeviceCacheForUser(userRecord.id);
-    const { haConnection } = await getUserWithHaConnection(userRecord.id);
     await setSession(
       {
         user: { id: userRecord.id, username: userRecord.username, role: userRecord.role },
@@ -237,7 +233,7 @@ export function SetupHomeScreen() {
             identity.deviceId,
             identity.deviceLabel
           );
-          await finalizeLogin(form.username.trim(), token);
+          await finalizeLogin(token);
           if (cancelled) return;
           resetVerification();
           return;
@@ -369,7 +365,6 @@ export function SetupHomeScreen() {
             setScanError('QR code is missing hub details. Please scan the Dinodia Hub QR.');
           }
           await applyHubDetails(parsed);
-          setShowHubDetails(false);
         }
       } else {
         setScanError('No QR code was detected.');

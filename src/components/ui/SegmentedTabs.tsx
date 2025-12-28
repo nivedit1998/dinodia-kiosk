@@ -17,12 +17,14 @@ type Tab = {
 
 type Props = {
   tabs: Tab[];
-  activeKey: string;
+  activeKey?: string | null;
+  allowNone?: boolean;
   onChange: (key: string) => void;
 };
 
-export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
-  const activeIndex = useMemo(() => Math.max(0, tabs.findIndex((t) => t.key === activeKey)), [tabs, activeKey]);
+export function SegmentedTabs({ tabs, activeKey, allowNone, onChange }: Props) {
+  const rawIndex = useMemo(() => tabs.findIndex((t) => t.key === activeKey), [tabs, activeKey]);
+  const activeIndex = allowNone && rawIndex < 0 ? -1 : Math.max(0, rawIndex);
   const [width, setWidth] = useState(0);
   const highlight = useRef(new Animated.Value(activeIndex)).current;
   const [layoutReady, setLayoutReady] = useState(false);
@@ -30,7 +32,7 @@ export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
   useEffect(() => {
     if (!layoutReady) return;
     Animated.timing(highlight, {
-      toValue: activeIndex,
+      toValue: Math.max(0, activeIndex),
       duration: 180,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
@@ -54,16 +56,18 @@ export function SegmentedTabs({ tabs, activeKey, onChange }: Props) {
 
   return (
     <View style={styles.container} onLayout={onLayout}>
-      <Animated.View
-        style={[
-          styles.highlight,
-          {
-            width: widthPercent * width || 0,
-            transform: [{ translateX }],
-          },
-        ]}
-        pointerEvents="none"
-      />
+      {activeIndex >= 0 ? (
+        <Animated.View
+          style={[
+            styles.highlight,
+            {
+              width: widthPercent * width || 0,
+              transform: [{ translateX }],
+            },
+          ]}
+          pointerEvents="none"
+        />
+      ) : null}
       {tabs.map((tab, idx) => {
         const selected = tab.key === activeKey;
         return (

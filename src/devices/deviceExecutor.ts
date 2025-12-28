@@ -4,6 +4,7 @@ import type { HaConnection } from '../models/haConnection';
 import { sendCloudDeviceCommand } from '../api/deviceControl';
 import { handleDeviceCommand } from '../utils/haCommands';
 import type { DeviceCommandId } from '../capabilities/deviceCapabilities';
+import { fetchHomeModeSecrets } from '../api/haSecrets';
 
 type ExecuteParams = {
   haMode: HaMode;
@@ -25,32 +26,15 @@ export async function executeDeviceCommand(params: ExecuteParams): Promise<void>
       });
       return;
     } catch (err: any) {
-      const msg = (err instanceof Error && err.message) || '';
-      const canFallback =
-        connection?.cloudUrl && typeof connection.cloudUrl === 'string' && connection.longLivedToken;
-      const isSessionError = msg.toLowerCase().includes('session has ended');
-      if (canFallback && isSessionError) {
-        await handleDeviceCommand(
-          {
-            ha: {
-              baseUrl: connection.cloudUrl!.replace(/\/+$/, ''),
-              longLivedToken: connection.longLivedToken,
-            },
-            entityId: device.entityId,
-            command,
-            value,
-            blindTravelSeconds: device.blindTravelSeconds ?? null,
-          },
-          true
-        );
-        return;
-      }
       throw err;
     }
   }
 
-  const baseUrl = (connection?.baseUrl ?? '').trim().replace(/\/+$/, '');
-  if (!connection || !baseUrl) {
+  const homeSecrets = await fetchHomeModeSecrets().catch(() => null);
+  const baseUrl = homeSecrets?.baseUrl ?? '';
+  const token = homeSecrets?.longLivedToken;
+
+  if (!baseUrl || !token) {
     throw new Error(
       'We cannot find your Dinodia Hub on the home Wi-Fi. Switch to Dinodia Cloud to control your place.'
     );
@@ -59,7 +43,7 @@ export async function executeDeviceCommand(params: ExecuteParams): Promise<void>
   await handleDeviceCommand({
     ha: {
       baseUrl,
-      longLivedToken: connection.longLivedToken,
+      longLivedToken: token,
     },
     entityId: device.entityId,
     command,

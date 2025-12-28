@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { TenantDashboardScreen } from '../screens/TenantDashboardScreen';
 import { TenantSettingsScreen } from '../screens/TenantSettingsScreen';
 import { TenantAddDevicesScreen } from '../screens/TenantAddDevicesScreen';
+import { ManageDevicesScreen } from '../screens/ManageDevicesScreen';
 import { AutomationsListScreen } from '../screens/automations/AutomationsListScreen';
 import { AutomationEditorScreen } from '../screens/automations/AutomationEditorScreen';
 
@@ -12,6 +13,7 @@ export type TenantStackParamList = {
   TenantDashboard: undefined;
   TenantSettings: undefined;
   TenantAddDevices: undefined;
+  ManageDevices: undefined;
 };
 
 export type TenantAutomationsStackParamList = {
@@ -34,6 +36,7 @@ function DashboardStackScreen() {
       <Stack.Screen name="TenantDashboard" component={TenantDashboardScreen} />
       <Stack.Screen name="TenantSettings" component={TenantSettingsScreen} />
       <Stack.Screen name="TenantAddDevices" component={TenantAddDevicesScreen} />
+      <Stack.Screen name="ManageDevices" component={ManageDevicesScreen} />
     </Stack.Navigator>
   );
 }

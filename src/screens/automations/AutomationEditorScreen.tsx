@@ -238,7 +238,6 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
     isCloud,
     onSwitchToCloud: () => switchMode('cloud'),
     onSwitchToHome: () => switchMode('home'),
-    haConnection: session.haConnection,
   });
 
   const handleOpenWifiSetup = () => {
@@ -678,6 +677,10 @@ export function AutomationEditorScreen({ route, navigation }: Props) {
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
         onLogout={handleLogout}
+        onManageDevices={() => {
+          setMenuVisible(false);
+          navigation.navigate('ManageDevices' as never);
+        }}
         onRemoteAccess={
           isAdmin
             ? () => {
@@ -725,8 +728,10 @@ function toActionDraft(spec: DeviceActionSpec, device: any, value?: number): Aut
       // Should not appear for automation surface; fallback to deterministic "on".
       return { kind: 'device_command', command: spec.commandOn, entityId: device.entityId };
     }
-    default:
-      return { kind: 'device_command', command: spec.kind as any, entityId: device.entityId };
+    default: {
+      const fallback: any = spec;
+      return { kind: 'device_command', command: fallback?.command ?? '', entityId: device.entityId };
+    }
   }
 }
 
