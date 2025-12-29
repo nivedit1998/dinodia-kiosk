@@ -90,22 +90,5 @@ export function buildMatterUserInput(
       userInput[name] = wifiPassword;
     }
   }
-
-  const existingKeys = new Set(Object.keys(userInput).map((k) => k.toLowerCase()));
-  if (pairingCode && !Array.from(existingKeys).some((k) => k.includes('code') || k.includes('pin'))) {
-    userInput.code = pairingCode;
-  }
-  if (wifiSsid && !Array.from(existingKeys).some((k) => k.includes('ssid') || k.includes('network'))) {
-    userInput.wifi_ssid = wifiSsid;
-  }
-  if (
-    wifiPassword &&
-    !Array.from(existingKeys).some(
-      (k) => k.includes('password') || k.includes('passphrase') || k.includes('psk')
-    )
-  ) {
-    userInput.wifi_password = wifiPassword;
-  }
-
   return userInput;
 }

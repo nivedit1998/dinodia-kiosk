@@ -41,6 +41,7 @@ type ChallengeCompleteResponse = {
 
 const LOGIN_PATH = '/api/auth/mobile-login';
 const LOGOUT_PATH = '/api/auth/logout';
+const KIOSK_LOGOUT_PATH = '/api/auth/kiosk-logout';
 const CHALLENGE_PATH = '/api/auth/challenges';
 const ADMIN_CHANGE_PASSWORD_PATH = '/api/admin/profile/change-password';
 const TENANT_CHANGE_PASSWORD_PATH = '/api/tenant/profile/change-password';
@@ -204,11 +205,9 @@ export async function changePassword(opts: {
 
 // Logout: just clear local session on mobile.
 export async function logoutRemote(): Promise<void> {
-  try {
-    await platformFetch<{ ok?: boolean }>(LOGOUT_PATH, { method: 'POST' });
-  } catch {
-    // ignore
-  }
+  // Best-effort: bump kiosk sessionVersion to kill any copied tokens.
+  await platformFetch<{ ok?: boolean }>(KIOSK_LOGOUT_PATH, { method: 'POST' }).catch(() => undefined);
+  await platformFetch<{ ok?: boolean }>(LOGOUT_PATH, { method: 'POST' }).catch(() => undefined);
   await Promise.all([
     clearPlatformToken().catch(() => undefined),
     clearPlatformCookie().catch(() => undefined),

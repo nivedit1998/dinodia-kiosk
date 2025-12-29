@@ -271,12 +271,33 @@ export function TenantAddDevicesScreen() {
     }
   };
 
+  const submitKnownInputs = useCallback(
+    async (flowId: string, step: HaConfigFlowStep) => {
+      if (!resolvedHa || step.type !== 'form') return step;
+      const userInput = buildMatterUserInput(step, {
+        pairingCode,
+        wifiSsid,
+        wifiPassword,
+      });
+      if (!userInput || Object.keys(userInput).length === 0) {
+        setError('Home Assistant needs more information to continue this step.');
+        setCurrentStep(3);
+        return step;
+      }
+      return continueConfigFlow(resolvedHa, flowId, userInput);
+    },
+    [resolvedHa, pairingCode, wifiSsid, wifiPassword]
+  );
+
   const pollSession = (flowId: string) => {
     if (!resolvedHa) return;
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const step = await continueConfigFlow(resolvedHa, flowId, {});
+        let step = await continueConfigFlow(resolvedHa, flowId, {});
+        if (step.type === 'form') {
+          step = await submitKnownInputs(flowId, step);
+        }
         const nextStatus = deriveStatusFromFlowStep(step);
         const nextSession: MatterSession = {
           id: flowId,
@@ -382,16 +403,23 @@ export function TenantAddDevicesScreen() {
   const handleStartCommissioning = async () => {
     setError(null);
     setWarnings([]);
+    const pairing = pairingCode.trim();
+    const ssid = wifiSsid.trim();
+    const pass = wifiPassword.trim();
     if (!selectedArea) {
       setError('Please choose an area.');
       return;
     }
-    if (!pairingCode.trim()) {
+    if (!pairing) {
       setError('Pairing code is required.');
       return;
     }
-    if (!wifiSsid.trim() || !wifiPassword.trim()) {
-      setError('Wi-Fi credentials are required.');
+    if (pass && !ssid) {
+      setError('Wi-Fi network name is required when providing a password.');
+      return;
+    }
+    if (ssid && !pass) {
+      setError('Wi-Fi password is required for the provided network.');
       return;
     }
     if (!resolvedHa) {
@@ -436,7 +464,14 @@ export function TenantAddDevicesScreen() {
         wifiSsid,
         wifiPassword,
       });
-      const step = await continueConfigFlow(resolvedHa, flowId, userInput);
+      let step = await continueConfigFlow(resolvedHa, flowId, userInput);
+      let attempts = 0;
+      while (step.type === 'form' && attempts < 3) {
+        const maybeStep = await submitKnownInputs(flowId, step);
+        attempts += 1;
+        if (maybeStep === step) break;
+        step = maybeStep;
+      }
       const stepStatus = deriveStatusFromFlowStep(step);
       const nextSession: MatterSession = {
         ...initialSession,
@@ -679,7 +714,7 @@ export function TenantAddDevicesScreen() {
           <View style={styles.stepSection}>
             <Text style={styles.bodyText}>
               Enter the Wi-Fi credentials for the network your Matter device should join. We only send
-              these to Home Assistant for commissioning and do not store them.
+              these to Home Assistant when it requests them during commissioning and do not store them.
             </Text>
             <TextField
               label="Wi-Fi name (SSID)"
@@ -752,11 +787,11 @@ export function TenantAddDevicesScreen() {
     }
   };
 
-  const hasAllInputs =
-    Boolean(selectedArea) &&
-    Boolean(pairingCode.trim()) &&
-    Boolean(wifiSsid.trim()) &&
-    Boolean(wifiPassword.trim());
+  const hasBaseInputs = Boolean(selectedArea) && Boolean(pairingCode.trim());
+  const wifiFieldsProvided = Boolean(wifiSsid.trim()) || Boolean(wifiPassword.trim());
+  const wifiFieldsComplete =
+    Boolean(wifiSsid.trim()) && Boolean(wifiPassword.trim());
+  const canStart = hasBaseInputs && (!wifiFieldsProvided || wifiFieldsComplete);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -901,7 +936,7 @@ export function TenantAddDevicesScreen() {
                   <SimpleButton
                     title={isSubmitting ? 'Starting...' : 'Start commissioning'}
                     onPress={() => void handleStartCommissioning()}
-                    disabled={!hasAllInputs || isSubmitting}
+                    disabled={!canStart || isSubmitting}
                     variant="primary"
                   />
                 ) : null}
