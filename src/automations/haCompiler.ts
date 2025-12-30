@@ -33,6 +33,10 @@ export type HaCondition =
       weekday?: string[];
       after?: string;
       before?: string;
+    }
+  | {
+      condition: 'template';
+      value_template: string;
     };
 
 export type HaAutomationConfig = {
@@ -71,6 +75,10 @@ export function compileAutomationDraftToHaConfig(draft: AutomationDraft): HaAuto
     }
     condition.push(cond);
   }
+  draft.triggers.forEach((t) => {
+    const delta = deltaTemplateCondition(t);
+    if (delta) condition.push(delta);
+  });
   return {
     id: draft.id,
     alias: draft.alias,
@@ -93,10 +101,9 @@ function compileTrigger(trigger: AutomationTrigger): HaTrigger {
       };
     case 'numeric_delta':
       return {
-        platform: 'numeric_state',
+        platform: 'state',
         entity_id: trigger.entityId,
         attribute: trigger.attribute,
-        // Represent delta as crossing zero change; HA lacks delta trigger, so we emit numeric_state without bounds.
       };
     case 'position_equals':
       return {
@@ -115,6 +122,20 @@ function compileTrigger(trigger: AutomationTrigger): HaTrigger {
     default:
       return { platform: 'state', entity_id: '' };
   }
+}
+
+function deltaTemplateCondition(trigger: AutomationTrigger): HaCondition | null {
+  if (trigger.kind !== 'numeric_delta') return null;
+  const attribute = trigger.attribute || 'state';
+  const threshold = attribute.toLowerCase().includes('temp') ? 1 : 0.01;
+  const path = attribute === 'state' ? 'state' : `attributes["${attribute}"]`;
+  const toVal = `(trigger.to_state.${path} | float(0))`;
+  const fromVal = `(trigger.from_state.${path} | float(0))`;
+  const decrease = trigger.direction === 'decrease';
+  const template = decrease
+    ? `{{ (${fromVal} - ${toVal}) >= ${threshold} }}`
+    : `{{ (${toVal} - ${fromVal}) >= ${threshold} }}`;
+  return { condition: 'template', value_template: template };
 }
 
 function compileAction(action: AutomationAction): HaAction | null {

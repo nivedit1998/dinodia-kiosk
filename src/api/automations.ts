@@ -199,7 +199,10 @@ function summarizeActions(actions: any[]): string | undefined {
 
 function hasTemplates(node: any): boolean {
   if (node == null) return false;
-  if (typeof node === 'string') return node.includes('{{');
+  if (typeof node === 'string') {
+    if (node.includes('trigger.to_state') && node.includes('trigger.from_state')) return false;
+    return node.includes('{{');
+  }
   if (Array.isArray(node)) return node.some(hasTemplates);
   if (typeof node === 'object') {
     return Object.values(node as Record<string, unknown>).some(hasTemplates);
@@ -208,6 +211,18 @@ function hasTemplates(node: any): boolean {
 }
 
 export async function listAutomations(opts: PlatformOpts = {}): Promise<AutomationSummary[]> {
+  if (opts.mode === 'cloud') {
+    const { data } = await platformFetch<{ ok?: boolean; automations?: any[]; error?: string }>(
+      '/api/automations?mode=cloud',
+      { method: 'GET' }
+    );
+    if (data.ok === false) throw new Error(data.error || 'Unable to load automations.');
+    const list: AutomationSummary[] = Array.isArray(data.automations)
+      ? data.automations.map(mapPlatformAutomationToSummary)
+      : [];
+    return filterAutomations(list);
+  }
+
   const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const list = await maybeListAutomationsViaHa(ha);
@@ -216,6 +231,19 @@ export async function listAutomations(opts: PlatformOpts = {}): Promise<Automati
 }
 
 export async function createAutomation(draft: AutomationDraft, opts: PlatformOpts = {}): Promise<void> {
+  if (opts.mode === 'cloud') {
+    const payload = toPlatformAutomationPayload(draft);
+    const { data } = await platformFetch<{ ok?: boolean; id?: string; error?: string }>(
+      '/api/automations?mode=cloud',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+    if (data.ok === false) throw new Error(data.error || 'Unable to save automation.');
+    return;
+  }
+
   const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const haConfig = compileAutomationDraftToHaConfig(draft);
@@ -236,6 +264,19 @@ export async function createAutomation(draft: AutomationDraft, opts: PlatformOpt
 }
 
 export async function updateAutomation(id: string, draft: AutomationDraft, opts: PlatformOpts = {}) {
+  if (opts.mode === 'cloud') {
+    const payload = toPlatformAutomationPayload({ ...draft, id });
+    const { data } = await platformFetch<{ ok?: boolean; error?: string }>(
+      `/api/automations/${encodeURIComponent(id)}?mode=cloud`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    );
+    if (data.ok === false) throw new Error(data.error || 'Unable to update automation.');
+    return;
+  }
+
   const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const haConfig = compileAutomationDraftToHaConfig({ ...draft, id });
@@ -246,6 +287,15 @@ export async function updateAutomation(id: string, draft: AutomationDraft, opts:
 }
 
 export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Promise<void> {
+  if (opts.mode === 'cloud') {
+    const { data } = await platformFetch<{ ok?: boolean; error?: string }>(
+      `/api/automations/${encodeURIComponent(id)}?mode=cloud`,
+      { method: 'DELETE' }
+    );
+    if (data.ok === false) throw new Error(data.error || 'Unable to delete automation.');
+    return;
+  }
+
   const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   await haFetch(ha, `/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
@@ -261,6 +311,18 @@ export async function deleteAutomation(id: string, opts: PlatformOpts = {}): Pro
 }
 
 export async function setAutomationEnabled(id: string, enabled: boolean, opts: PlatformOpts = {}): Promise<void> {
+  if (opts.mode === 'cloud') {
+    const { data } = await platformFetch<{ ok?: boolean; error?: string }>(
+      `/api/automations/${encodeURIComponent(id)}/enabled?mode=cloud`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      }
+    );
+    if (data.ok === false) throw new Error(data.error || 'Unable to update automation state.');
+    return;
+  }
+
   const ha = await resolveHa(opts.haConnection, opts.mode);
   if (!ha) throw new Error('Dinodia Hub connection is not configured.');
   const service = enabled ? 'turn_on' : 'turn_off';
@@ -393,4 +455,91 @@ function filterAutomations(list: AutomationSummary[]): AutomationSummary[] {
     const isDefault = alias.includes('default') || description.includes('default');
     return !isDefault;
   });
+}
+
+function mapPlatformAutomationToSummary(auto: any): AutomationSummary {
+  const raw = auto?.raw ?? {};
+  const triggers = Array.isArray(raw.triggers) ? raw.triggers : Array.isArray(raw.trigger) ? raw.trigger : [];
+  const actions = Array.isArray(raw.actions) ? raw.actions : Array.isArray(raw.action) ? raw.action : [];
+  return {
+    id: typeof auto?.id === 'string' ? auto.id : String(auto?.id ?? '').replace(/^automation\\./, ''),
+    alias: auto?.alias ?? 'Automation',
+    description: auto?.description ?? '',
+    enabled: typeof auto?.enabled === 'boolean' ? auto.enabled : true,
+    triggerSummary: auto?.triggerSummary,
+    actionSummary: auto?.actionSummary,
+    entities: Array.isArray(auto?.entities) ? auto.entities : [],
+    hasTemplates: Boolean(auto?.hasTemplates),
+    canEdit: auto?.canEdit !== false,
+    mode: auto?.mode ?? 'single',
+    raw: raw,
+    hasDeviceAction: typeof auto?.hasDeviceAction === 'boolean' ? auto.hasDeviceAction : undefined,
+  };
+}
+
+function toPlatformAutomationPayload(draft: AutomationDraft): Record<string, unknown> {
+  const trigger = (draft.triggers && draft.triggers[0]) || null;
+  const action = (draft.actions && draft.actions[0]) || null;
+  const payload: Record<string, unknown> = {
+    alias: draft.alias,
+    description: draft.description ?? '',
+    mode: draft.mode ?? 'single',
+    enabled: true,
+  };
+
+  if (trigger) {
+    payload.trigger = mapTriggerToPlatform(trigger, draft.daysOfWeek);
+  }
+  if (action) {
+    payload.action = mapActionToPlatform(action);
+  }
+  return payload;
+}
+
+function mapTriggerToPlatform(trigger: AutomationTrigger, daysOfWeek?: string[]) {
+  if (trigger.kind === 'state') {
+    return {
+      type: 'device',
+      entityId: trigger.entityId,
+      mode: 'state_equals',
+      to: trigger.to ?? undefined,
+    };
+  }
+  if (trigger.kind === 'numeric_delta') {
+    return {
+      type: 'device',
+      entityId: trigger.entityId,
+      mode: 'attribute_delta',
+      attribute: trigger.attribute,
+      direction: trigger.direction === 'decrease' ? 'decreased' : 'increased',
+    };
+  }
+  if (trigger.kind === 'position_equals') {
+    return {
+      type: 'device',
+      entityId: trigger.entityId,
+      mode: 'position_equals',
+      attribute: trigger.attribute,
+      to: trigger.value,
+    };
+  }
+  if (trigger.kind === 'time') {
+    return {
+      type: 'schedule',
+      scheduleType: 'weekly',
+      at: trigger.at,
+      weekdays: Array.isArray(trigger.daysOfWeek) ? trigger.daysOfWeek : daysOfWeek ?? [],
+    };
+  }
+  return null;
+}
+
+function mapActionToPlatform(action: AutomationAction) {
+  if (action.kind !== 'device_command') return null;
+  return {
+    type: 'device_command',
+    entityId: action.entityId,
+    command: action.command,
+    value: action.value,
+  };
 }
