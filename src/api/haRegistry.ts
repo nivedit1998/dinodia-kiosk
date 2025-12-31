@@ -3,12 +3,31 @@ import type { HaConnectionLike } from './ha';
 import { haWsCall } from './haWebSocket';
 
 type HaDeviceRegistryEntry = { id?: string };
-type HaEntityRegistryEntry = { entity_id?: string };
+type HaEntityRegistryEntry = { entity_id?: string; device_id?: string | null };
 
 export type RegistrySnapshot = {
   deviceIds: string[];
   entityIds: string[];
 };
+
+export async function fetchEntityToDeviceMap(
+  ha: HaConnectionLike
+): Promise<Map<string, string>> {
+  const [entities] = await Promise.all([
+    haWsCall<HaEntityRegistryEntry[]>(ha, 'config/entity_registry/list'),
+  ]);
+  const map = new Map<string, string>();
+  for (const entry of entities ?? []) {
+    const entityId =
+      typeof entry?.entity_id === 'string' ? entry.entity_id.trim() : '';
+    const deviceId =
+      typeof entry?.device_id === 'string' ? entry.device_id.trim() : '';
+    if (entityId && deviceId) {
+      map.set(entityId, deviceId);
+    }
+  }
+  return map;
+}
 
 export async function fetchRegistrySnapshot(ha: HaConnectionLike): Promise<RegistrySnapshot> {
   const [devices, entities] = await Promise.all([

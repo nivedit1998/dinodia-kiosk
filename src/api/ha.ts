@@ -1,5 +1,6 @@
 // src/api/ha.ts
 import { classifyDeviceByLabel, LabelCategory } from '../utils/labelCatalog';
+import { fetchEntityToDeviceMap } from './haRegistry';
 
 export type HaConnectionLike = {
   baseUrl: string;
@@ -186,6 +187,10 @@ export async function getDevicesWithMetadata(
     meta = [];
   }
 
+  // Fallback: if template failed OR if any meta entries are missing device_id, supplement via entity registry.
+  const hasAnyMissingDeviceId = meta.length === 0 || meta.some((m) => !m.device_id);
+  const entityToDeviceMap = hasAnyMissingDeviceId ? await fetchEntityToDeviceMap(ha) : null;
+
   const metaByEntity = new Map<string, TemplateDeviceMeta>();
   for (const m of meta) {
     metaByEntity.set(m.entity_id, m);
@@ -194,10 +199,13 @@ export async function getDevicesWithMetadata(
   return states.map((s) => {
     const domain = s.entity_id.split('.')[0] || '';
     const metaEntry = metaByEntity.get(s.entity_id);
-    const deviceId =
+    const deviceIdFromMeta =
       metaEntry && typeof metaEntry.device_id === 'string' && metaEntry.device_id.trim().length > 0
         ? metaEntry.device_id
         : null;
+    const deviceId =
+      deviceIdFromMeta ??
+      (entityToDeviceMap ? entityToDeviceMap.get(s.entity_id) ?? null : null);
     const labels = (metaEntry?.labels ?? []).filter(
       (label): label is string =>
         typeof label === 'string' && label.trim().length > 0

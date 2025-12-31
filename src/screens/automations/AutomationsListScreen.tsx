@@ -152,6 +152,12 @@ export function AutomationsListScreen({}: Props) {
     return eligible.filter((d) => !isDetailDevice(d.state));
   }, [devices]);
 
+  const entityToDeviceId = useMemo(() => {
+    const map = new Map<string, string | null>();
+    devices.forEach((d) => map.set(d.entityId, d.deviceId ?? null));
+    return map;
+  }, [devices]);
+
   const deviceOptions = useMemo(
     () =>
       primaryDevices.map((d) => ({
@@ -164,8 +170,12 @@ export function AutomationsListScreen({}: Props) {
   const selectedLabel =
     deviceOptions.find((opt) => opt.id === selectedEntityId)?.label || 'All automations';
 
+  const selectedDeviceId = selectedEntityId ? entityToDeviceId.get(selectedEntityId) ?? null : null;
+
   const filteredAutomations = selectedEntityId
-    ? automations.filter((a) => (a.entities ?? []).includes(selectedEntityId))
+    ? automations.filter((a) =>
+        matchesAutomationTarget(a, selectedEntityId, selectedDeviceId, entityToDeviceId)
+      )
     : automations;
 
   return (
@@ -661,4 +671,29 @@ function summarizeAutomation(auto: AutomationSummary, devices: UIDevice[]) {
     actionSummary: actionSummary.summary,
     primaryName: actionSummary.primaryName,
   };
+}
+
+function matchesAutomationTarget(
+  automation: AutomationSummary,
+  selectedEntityId: string,
+  selectedDeviceId: string | null,
+  entityToDeviceId: Map<string, string | null>
+) {
+  const targetEntities = automation.entities ?? [];
+  if (targetEntities.includes(selectedEntityId)) return true;
+
+  if (selectedDeviceId) {
+    const targetDeviceIds = automation.targetDeviceIds ?? [];
+    if (targetDeviceIds.includes(selectedDeviceId)) return true;
+    if (targetEntities.some((entityId) => entityToDeviceId.get(entityId) === selectedDeviceId)) {
+      return true;
+    }
+  }
+
+  // Safe fallback: if we lack deviceId mapping, at least match primary entity id lists.
+  if (!selectedDeviceId && targetEntities.length > 0) {
+    return targetEntities.includes(selectedEntityId);
+  }
+
+  return false;
 }

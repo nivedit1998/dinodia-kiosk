@@ -16,6 +16,7 @@ export type AutomationSummary = {
   hasDeviceAction?: boolean;
   draft?: AutomationDraft | null;
   entities?: string[];
+  targetDeviceIds?: string[];
   hasTemplates?: boolean;
   canEdit?: boolean;
   mode?: string;
@@ -396,7 +397,7 @@ async function enrichAutomationsWithHaDetails(list: AutomationSummary[], ha: HaC
       const triggerSummary = summarizeTriggers(triggers);
       const actionSummary = summarizeActions(actions);
       const hasDeviceAction = actions.length > 0 ? actions.some(actionTargetsDevice) : false;
-      const entities = extractActionEntities(actions);
+      const targets = extractActionTargets(actions);
       const templates =
         hasTemplates(triggers) || hasTemplates(actions) || hasTemplates(config.condition ?? config.conditions);
       return {
@@ -406,7 +407,8 @@ async function enrichAutomationsWithHaDetails(list: AutomationSummary[], ha: HaC
         triggerSummary: item.triggerSummary || triggerSummary,
         actionSummary: item.actionSummary || actionSummary,
         hasDeviceAction: typeof item.hasDeviceAction === 'boolean' ? item.hasDeviceAction : hasDeviceAction,
-        entities,
+        entities: targets.entityIds,
+        targetDeviceIds: targets.deviceIds,
         hasTemplates: templates,
         canEdit: !templates,
         mode: config.mode ?? item.mode ?? 'single',
@@ -417,20 +419,47 @@ async function enrichAutomationsWithHaDetails(list: AutomationSummary[], ha: HaC
   return enriched;
 }
 
-function extractActionEntities(actions: any[]): string[] {
-  const entities = new Set<string>();
-  actions.forEach((action) => {
-    const fromTarget = entityIdFromTarget(action.target);
-    if (fromTarget) entities.add(fromTarget);
-    const direct = action.entity_id ?? action.data?.entity_id;
-    if (typeof direct === 'string') entities.add(direct);
-    if (Array.isArray(direct)) {
-      direct.forEach((d) => {
-        if (typeof d === 'string') entities.add(d);
+function extractActionTargets(actions: any[]): { entityIds: string[]; deviceIds: string[] } {
+  const entityIds = new Set<string>();
+  const deviceIds = new Set<string>();
+
+  const addEntity = (val: unknown) => {
+    if (typeof val === 'string') entityIds.add(val);
+  };
+  const addDevice = (val: unknown) => {
+    if (typeof val === 'string') deviceIds.add(val);
+  };
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    const target = (node as Record<string, any>).target as Record<string, any> | undefined;
+    const actionDevice = (node as Record<string, any>).device_id;
+    const directEntity = (node as Record<string, any>).entity_id ?? (node as Record<string, any>).data?.entity_id;
+
+    addDevice(actionDevice);
+    if (Array.isArray(actionDevice)) actionDevice.forEach(addDevice);
+
+    const targetEntity = target?.entity_id;
+    const targetDevice = target?.device_id;
+    addEntity(targetEntity);
+    if (Array.isArray(targetEntity)) targetEntity.forEach(addEntity);
+    addDevice(targetDevice);
+    if (Array.isArray(targetDevice)) targetDevice.forEach(addDevice);
+
+    addEntity(directEntity);
+    if (Array.isArray(directEntity)) directEntity.forEach(addEntity);
+
+    if (Array.isArray(node.sequence)) node.sequence.forEach(visit);
+    if (Array.isArray(node.choose)) {
+      node.choose.forEach((branch: any) => {
+        if (Array.isArray(branch.sequence)) branch.sequence.forEach(visit);
+        if (Array.isArray(branch.conditions)) branch.conditions.forEach(visit);
       });
     }
-  });
-  return Array.from(entities);
+  };
+
+  actions.forEach(visit);
+  return { entityIds: Array.from(entityIds), deviceIds: Array.from(deviceIds) };
 }
 
 function findMatchingConfig(item: AutomationSummary, configs: any[]): any | null {
@@ -469,6 +498,7 @@ function mapPlatformAutomationToSummary(auto: any): AutomationSummary {
     triggerSummary: auto?.triggerSummary,
     actionSummary: auto?.actionSummary,
     entities: Array.isArray(auto?.entities) ? auto.entities : [],
+    targetDeviceIds: Array.isArray(auto?.actionDeviceIds) ? auto.actionDeviceIds : [],
     hasTemplates: Boolean(auto?.hasTemplates),
     canEdit: auto?.canEdit !== false,
     mode: auto?.mode ?? 'single',

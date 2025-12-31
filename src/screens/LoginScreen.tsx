@@ -185,16 +185,24 @@ export function LoginScreen() {
       }
 
       if (result.status === 'NEEDS_EMAIL') {
-        setNeedsEmail(true);
-        Alert.alert('Almost there', 'Please enter your email to finish verification.');
+        navigation.navigate('TenantEmailSetup', {
+          username: trimmedUsername,
+          password,
+          deviceId: identity.deviceId,
+          deviceLabel: identity.deviceLabel,
+        });
         return;
       }
 
       if (result.status === 'CHALLENGE') {
-        setPendingUsername(trimmedUsername);
-        setChallengeStatus('PENDING');
-        setChallengeId(result.challengeId);
-        setNeedsEmail(false);
+        navigation.navigate('TenantEmailSetup', {
+          username: trimmedUsername,
+          password,
+          deviceId: identity.deviceId,
+          deviceLabel: identity.deviceLabel,
+          challengeId: result.challengeId,
+        });
+        return;
       }
       // Navigation container will switch from Auth to App automatically
     } catch (err) {
