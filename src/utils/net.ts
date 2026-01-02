@@ -5,6 +5,8 @@ const privateRanges = [
   /^172\.(1[6-9]|2\d|3[0-1])\.(\d{1,3})\.\d{1,3}$/,
   /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/,
   /^localhost$/i,
+  /\.local$/i,
+  /\.lan$/i,
 ];
 
 export function isLocalIp(host: string): boolean {

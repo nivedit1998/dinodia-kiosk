@@ -8,6 +8,7 @@ import { platformFetch } from './platformFetch';
 import type { Role } from '../models/roles';
 import type { HaConnection } from '../models/haConnection';
 import { fetchHomeModeSecrets } from './haSecrets';
+import { isLocalIp } from '../utils/net';
 
 type HaConnectionSafe = {
   id: number;
@@ -229,6 +230,9 @@ function normalizeHaBaseUrl(value: string): string {
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new Error('Dinodia Hub URL must start with http:// or https://');
+  }
+  if (parsed.protocol === 'http:' && !isLocalIp(parsed.hostname)) {
+    throw new Error('For security, http:// Dinodia Hub URLs are only allowed on the local network.');
   }
   return trimmed.replace(/\/+$/, '');
 }

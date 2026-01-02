@@ -31,6 +31,7 @@ import { getDevicePreset, isDeviceActive } from './deviceVisuals';
 import { executeDeviceCommand } from '../devices/deviceExecutor';
 import { palette, radii, shadows, spacing } from '../ui/theme';
 import { fetchHomeModeSecrets } from '../api/haSecrets';
+import { assertHaUrlAllowed } from '../api/haUrlPolicy';
 
 type Props = {
   device: UIDevice | null;
@@ -89,6 +90,12 @@ export function DeviceDetail({
         const base = secrets.baseUrl;
         if (!active) return;
         if (!base || !secrets.longLivedToken) {
+          setCameraAuth(null);
+          return;
+        }
+        try {
+          assertHaUrlAllowed(base);
+        } catch {
           setCameraAuth(null);
           return;
         }

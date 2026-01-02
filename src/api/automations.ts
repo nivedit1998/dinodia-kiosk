@@ -4,6 +4,7 @@ import type { HaMode } from './dinodia';
 import type { HaConnection } from '../models/haConnection';
 import { platformFetch } from './platformFetch';
 import { getHaConnectionForMode } from './haSecrets';
+import { assertHaUrlAllowed } from './haUrlPolicy';
 
 export type AutomationSummary = {
   id: string;
@@ -53,6 +54,7 @@ async function resolveHa(conn: HaConnection | null | undefined, mode?: HaMode): 
 }
 
 async function haFetch(ha: HaConn, path: string, init: RequestInit = {}) {
+  assertHaUrlAllowed(ha.baseUrl);
   const url = `${ha.baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
   const res = await fetch(url, {
     ...init,

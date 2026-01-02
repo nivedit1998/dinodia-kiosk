@@ -1,6 +1,7 @@
 // src/api/ha.ts
 import { classifyDeviceByLabel, LabelCategory } from '../utils/labelCatalog';
 import { fetchEntityToDeviceMap } from './haRegistry';
+import { assertHaUrlAllowed } from './haUrlPolicy';
 
 export type HaConnectionLike = {
   baseUrl: string;
@@ -51,13 +52,11 @@ function describeNetworkFailure(baseUrl: string, path: string, err: unknown): Er
     const host = parsed.hostname.toLowerCase();
     if (host.endsWith('.local')) {
       hints.push(
-        'Android devices often cannot resolve .local hostnames. Update the Dinodia Hub URL to use the IP address (e.g., http://192.168.1.10:8123) in Settings.'
+        'Android devices often cannot resolve .local hostnames. Update the Dinodia Hub URL to use the IP address in Settings.'
       );
     }
     if (parsed.protocol === 'http:') {
-      hints.push(
-        'Make sure you are on the same Wi-Fi as the Dinodia Hub and that cleartext HTTP traffic is allowed.'
-      );
+      hints.push('Make sure you are on the same trusted home Wi‑Fi as the Dinodia Hub.');
     }
   } catch {
     // ignore parsing issues; baseUrl should already be valid
@@ -100,6 +99,7 @@ async function callHomeAssistantAPI<T>(
   init?: RequestInit,
   timeoutMs = 5000
 ): Promise<T> {
+  assertHaUrlAllowed(ha.baseUrl);
   let res: Response;
   try {
     res = await fetchWithTimeout(buildHaUrl(ha.baseUrl, path), {

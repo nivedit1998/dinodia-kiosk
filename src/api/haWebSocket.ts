@@ -1,5 +1,6 @@
 // src/api/haWebSocket.ts
 import type { HaConnectionLike } from './ha';
+import { assertHaUrlAllowed } from './haUrlPolicy';
 
 type HaWsResult<T> = {
   id?: number;
@@ -10,9 +11,10 @@ type HaWsResult<T> = {
 };
 
 function buildWsUrl(baseUrl: string): string {
-  const url = new URL(baseUrl);
-  const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${url.host}/api/websocket`;
+  const url = assertHaUrlAllowed(baseUrl);
+  return url.protocol === 'https:'
+    ? `wss://${url.host}/api/websocket`
+    : `ws://${url.host}/api/websocket`;
 }
 
 export async function haWsCall<T>(

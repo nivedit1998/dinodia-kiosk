@@ -217,6 +217,15 @@ export function RemoteAccessSetupScreen() {
   const accountUrl = useMemo(() => (baseUrl ? `${baseUrl}/config/cloud/account` : null), [baseUrl]);
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
   const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
+  const isHttpsHa = useMemo(() => {
+    if (!baseUrl) return false;
+    try {
+      const u = new URL(baseUrl);
+      return u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }, [baseUrl]);
 
   const startStepUp = useCallback(async () => {
     if (!user) return;
@@ -428,6 +437,23 @@ export function RemoteAccessSetupScreen() {
       return new Set<string>();
     }
   }, [baseUrl]);
+  const shouldStartLoad = useCallback(
+    (req: any) => {
+      try {
+        const u = new URL(req.url);
+        const host = u.host.toLowerCase();
+        const isAllowedHost = allowedHosts.has(host);
+        const path = u.pathname || '/';
+        const isAllowedPath =
+          isAllowedHost && (path.startsWith('/config/cloud/account') || path.startsWith('/auth/'));
+        const isAllowedProtocol = u.protocol === 'https:' || u.protocol === 'http:';
+        return isAllowedProtocol && isAllowedPath;
+      } catch {
+        return false;
+      }
+    },
+    [allowedHosts]
+  );
 
   const injectedJs = useMemo(() => {
     return `
@@ -569,7 +595,14 @@ export function RemoteAccessSetupScreen() {
         batteryLevel={batteryLevel}
       />
 
-      <ScrollView contentContainerStyle={styles.container}>
+        <ScrollView contentContainerStyle={styles.container}>
+          {!isHttpsHa && (
+            <View style={styles.warning}>
+              <Text style={styles.warningText}>
+                Auto-login is disabled on HTTP. Please sign in to Home Assistant manually when prompted.
+              </Text>
+            </View>
+          )}
         <View style={styles.card}>
           <Text style={styles.title}>Remote Access</Text>
           <Text style={styles.subtitle}>
@@ -691,28 +724,33 @@ export function RemoteAccessSetupScreen() {
         </View>
       </ScrollView>
 
-      <Modal visible={webVisible} animationType="slide" onRequestClose={() => setWebVisible(false)}>
-        <SafeAreaView style={styles.webRoot}>
-          <View style={styles.webHeader}>
-            <Text style={styles.webTitle}>Home Assistant</Text>
-            <PrimaryButton title="Close" variant="ghost" onPress={() => setWebVisible(false)} />
-          </View>
-          {accountUrl && haCreds ? (
-            <WebView
-              ref={webRef}
-              key={webKey}
-              source={{ uri: accountUrl }}
-              onMessage={onWebMessage}
-              onNavigationStateChange={onNavStateChange}
-              injectedJavaScript={buildAutoLoginScript(haCreds.haUsername, haCreds.haPassword)}
-              injectedJavaScriptBeforeContentLoaded={injectedJs}
-              javaScriptEnabled
-              domStorageEnabled
-              startInLoadingState
-              renderLoading={() => (
-                <View style={styles.webLoading}>
-                  <ActivityIndicator size="large" color={palette.primary} />
-                  <Text style={styles.webLoadingText}>Loading…</Text>
+          <Modal visible={webVisible} animationType="slide" onRequestClose={() => setWebVisible(false)}>
+            <SafeAreaView style={styles.webRoot}>
+              <View style={styles.webHeader}>
+                <Text style={styles.webTitle}>Home Assistant</Text>
+                <PrimaryButton title="Close" variant="ghost" onPress={() => setWebVisible(false)} />
+              </View>
+              {accountUrl && haCreds ? (
+                <WebView
+                  ref={webRef}
+                  key={webKey}
+                  source={{ uri: accountUrl }}
+                  onShouldStartLoadWithRequest={shouldStartLoad}
+                  onMessage={onWebMessage}
+                  onNavigationStateChange={onNavStateChange}
+                  injectedJavaScript={isHttpsHa ? buildAutoLoginScript(haCreds.haUsername, haCreds.haPassword) : undefined}
+                  injectedJavaScriptBeforeContentLoaded={injectedJs}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  setSupportMultipleWindows={false}
+                  javaScriptCanOpenWindowsAutomatically={false}
+                  allowFileAccess={false}
+                  allowUniversalAccessFromFileURLs={false}
+                  startInLoadingState
+                  renderLoading={() => (
+                    <View style={styles.webLoading}>
+                      <ActivityIndicator size="large" color={palette.primary} />
+                      <Text style={styles.webLoadingText}>Loading…</Text>
                 </View>
               )}
             />

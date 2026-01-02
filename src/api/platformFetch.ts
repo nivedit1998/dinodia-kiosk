@@ -9,7 +9,16 @@ function getPlatformBase(): string {
   if (!raw) {
     throw new Error('Platform API is not configured. Please try again later.');
   }
-  return raw.replace(/\/+$/, '');
+  const normalized = raw.replace(/\/+$/, '');
+  try {
+    const url = new URL(normalized);
+    if (url.protocol !== 'https:') {
+      throw new Error('Dinodia Platform API must use https://');
+    }
+  } catch {
+    throw new Error('Dinodia Platform API must be a valid https:// URL');
+  }
+  return normalized;
 }
 
 export async function platformFetch<T = any>(

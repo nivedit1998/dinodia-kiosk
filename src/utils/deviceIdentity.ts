@@ -12,7 +12,11 @@ const DEVICE_LABEL_KEY = 'dinodia_device_label';
 
 function generateDeviceId(): string {
   const stamp = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 10);
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  const rand = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
   return `kiosk_${stamp}_${rand}`;
 }
 

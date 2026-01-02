@@ -1,16 +1,30 @@
 // src/api/platformToken.ts
-// Simple bearer token storage that can be swapped for secure storage later.
-import { loadJson, removeKey, saveJson } from '../utils/storage';
+import * as Keychain from 'react-native-keychain';
+import { loadJson, removeKey } from '../utils/storage';
 
-const TOKEN_KEY = 'dinodia_platform_bearer_v1';
+const SERVICE = 'dinodia_platform_bearer_v1';
+const LEGACY_KEY = 'dinodia_platform_bearer_v1';
 
 export async function getPlatformToken(): Promise<string | null> {
+  const creds = await Keychain.getGenericPassword({ service: SERVICE });
+  if (creds && creds.password) return creds.password;
+
+  // One-time migration from legacy AsyncStorage key if present.
   try {
-    const val = await loadJson<string>(TOKEN_KEY);
-    return val ?? null;
+    const legacy = await loadJson<string>(LEGACY_KEY);
+    if (legacy && legacy.trim().length > 0) {
+      await Keychain.setGenericPassword('token', legacy, {
+        service: SERVICE,
+        accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
+      await removeKey(LEGACY_KEY);
+      return legacy;
+    }
   } catch {
-    return null;
+    // swallow migration errors; return null below
   }
+
+  return null;
 }
 
 export async function setPlatformToken(token: string): Promise<void> {
@@ -18,9 +32,12 @@ export async function setPlatformToken(token: string): Promise<void> {
     await clearPlatformToken();
     return;
   }
-  await saveJson(TOKEN_KEY, token);
+  await Keychain.setGenericPassword('token', token, {
+    service: SERVICE,
+    accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
 }
 
 export async function clearPlatformToken(): Promise<void> {
-  await removeKey(TOKEN_KEY);
+  await Keychain.resetGenericPassword({ service: SERVICE });
 }

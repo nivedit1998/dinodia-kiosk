@@ -42,10 +42,11 @@ const AUTH_EPHEMERAL_KEY = 'spotify_auth_ephemeral_v1';
 
 function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const bytes = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(bytes);
   let result = '';
-  for (let i = 0; i < length; i += 1) {
-    const index = Math.floor(Math.random() * chars.length);
-    result += chars[index];
+  for (let i = 0; i < bytes.length; i += 1) {
+    result += chars[bytes[i] % chars.length];
   }
   return result;
 }
@@ -160,6 +161,32 @@ export function SpotifyCard({ compact }: SpotifyCardProps) {
       cancelled = true;
     };
   }, []);
+
+  const allowedSpotifyHosts = useMemo(() => new Set(['accounts.spotify.com']), []);
+  const redirectScheme = useMemo(() => {
+    try {
+      const u = new URL(SPOTIFY_REDIRECT_URI);
+      return u.protocol.replace(':', '').toLowerCase();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const shouldStartSpotifyAuth = useCallback(
+    (req: any) => {
+      try {
+        const u = new URL(req.url);
+        const host = u.host?.toLowerCase() || '';
+        const protocol = (u.protocol || '').toLowerCase();
+        if (protocol === 'https:' && allowedSpotifyHosts.has(host)) return true;
+        if (redirectScheme && protocol.replace(':', '') === redirectScheme) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    },
+    [allowedSpotifyHosts, redirectScheme]
+  );
 
   const refreshPlayback = useCallback(async () => {
     setErrorMessage(null);
@@ -625,6 +652,7 @@ export function SpotifyCard({ compact }: SpotifyCardProps) {
           {authUrl ? (
             <WebView
               source={{ uri: authUrl }}
+              onShouldStartLoadWithRequest={shouldStartSpotifyAuth}
               onNavigationStateChange={handleAuthNavigation}
               startInLoadingState
               incognito

@@ -1,5 +1,6 @@
 // src/spotify/spotifyApi.ts
 import { loadJson, saveJson, removeKey } from '../utils/storage';
+import * as Keychain from 'react-native-keychain';
 
 export type SpotifyTokens = {
   accessToken: string;
@@ -26,6 +27,7 @@ export type SpotifyPlaybackState = {
 };
 
 const TOKENS_STORAGE_KEY = 'spotify_tokens_v1';
+const TOKENS_KEYCHAIN_SERVICE = 'dinodia_spotify_tokens_v1';
 
 // Replace these placeholders in production with your real values.
 export const SPOTIFY_CLIENT_ID: string = '9e88d4fb6e0c44049242fac02aaddea0';
@@ -63,21 +65,51 @@ export function buildAuthorizeUrl(codeChallenge: string, state: string): string 
   return `https://accounts.spotify.com/authorize?${params}`;
 }
 
-export async function loadTokens(): Promise<SpotifyTokens | null> {
-  const tokens = await loadJson<SpotifyTokens>(TOKENS_STORAGE_KEY);
-  if (!tokens) return null;
-  if (!tokens.accessToken || !tokens.expiresAtMillis) {
-    return null;
+async function migrateLegacyTokens(): Promise<SpotifyTokens | null> {
+  try {
+    const legacy = await loadJson<SpotifyTokens>(TOKENS_STORAGE_KEY);
+    if (legacy && legacy.accessToken && legacy.expiresAtMillis) {
+      await Keychain.setGenericPassword('spotify_tokens', JSON.stringify(legacy), {
+        service: TOKENS_KEYCHAIN_SERVICE,
+        accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
+      await removeKey(TOKENS_STORAGE_KEY).catch(() => undefined);
+      return legacy;
+    }
+  } catch {
+    // ignore migration errors
   }
-  return tokens;
+  return null;
+}
+
+export async function loadTokens(): Promise<SpotifyTokens | null> {
+  try {
+    const creds = await Keychain.getGenericPassword({ service: TOKENS_KEYCHAIN_SERVICE });
+    if (creds && creds.password) {
+      const parsed = JSON.parse(creds.password) as SpotifyTokens;
+      if (parsed?.accessToken && parsed?.expiresAtMillis) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore parse/keychain errors and attempt legacy migration
+  }
+  const migrated = await migrateLegacyTokens();
+  if (migrated && migrated.accessToken && migrated.expiresAtMillis) return migrated;
+  return null;
 }
 
 export async function saveTokens(tokens: SpotifyTokens): Promise<void> {
-  await saveJson(TOKENS_STORAGE_KEY, tokens);
+  await Keychain.setGenericPassword('spotify_tokens', JSON.stringify(tokens), {
+    service: TOKENS_KEYCHAIN_SERVICE,
+    accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  await removeKey(TOKENS_STORAGE_KEY).catch(() => undefined);
 }
 
 export async function clearTokens(): Promise<void> {
-  await removeKey(TOKENS_STORAGE_KEY);
+  await Keychain.resetGenericPassword({ service: TOKENS_KEYCHAIN_SERVICE });
+  await removeKey(TOKENS_STORAGE_KEY).catch(() => undefined);
 }
 
 async function exchange(

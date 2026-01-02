@@ -9,7 +9,7 @@ export type HomeModeSecrets = {
   longLivedToken: string;
 };
 
-const TTL_MS = 15 * 60 * 1000; // 15 minutes
+const TTL_MS = 2 * 60 * 1000; // 2 minutes
 let cachedHomeSecrets: HomeModeSecrets | null = null;
 let cachedAtMs = 0;
 let inflight: Promise<HomeModeSecrets> | null = null;
