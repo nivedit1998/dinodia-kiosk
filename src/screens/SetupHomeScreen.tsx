@@ -12,7 +12,6 @@ import { useNavigation } from '@react-navigation/native';
 import { fetchChallengeStatus, completeChallenge, resendChallenge } from '../api/auth';
 import { platformFetch } from '../api/platformFetch';
 import { fetchKioskContext } from '../api/dinodia';
-import { verifyHaCloudConnection } from '../api/ha';
 import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { getDeviceIdentity } from '../utils/deviceIdentity';
@@ -25,10 +24,84 @@ type HubDetails = {
   haLongLivedToken?: string;
   haUsername?: string;
   haPassword?: string;
+  dinodiaSerial?: string;
+  bootstrapSecret?: string;
 };
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+type ReachabilityResult =
+  | { kind: 'ok' }
+  | { kind: 'unauthorized'; status: number }
+  | { kind: 'hub-agent-url' }
+  | { kind: 'local-hostname' }
+  | { kind: 'unreachable' };
+
+async function checkHubReachability(baseUrl: string, token: string): Promise<ReachabilityResult> {
+  const normalized = normalizeBaseUrl(baseUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return { kind: 'unreachable' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isLocalHostname = host.endsWith('.local');
+
+  // If the installer accidentally encoded the hub-agent URL (default :8099),
+  // treat it as reachable but not a valid onboarding target (HA token won't work).
+  if (parsed.port === '8099') {
+    try {
+      const res = await fetchWithTimeout(`${normalized}/_dinodia/sync-status`, { method: 'GET' }, 2500);
+      if (res.ok) return { kind: 'hub-agent-url' };
+    } catch {
+      // fall through to unreachable
+    }
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      `${normalized}/api/config`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+      4000
+    );
+
+    if (res.ok) {
+      await res.json().catch(() => ({}));
+      return { kind: 'ok' };
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      return { kind: 'unauthorized', status: res.status };
+    }
+
+    return isLocalHostname ? { kind: 'local-hostname' } : { kind: 'unreachable' };
+  } catch {
+    return isLocalHostname ? { kind: 'local-hostname' } : { kind: 'unreachable' };
+  }
 }
 
 function parseHubQrPayload(raw: string): HubDetails | null {
@@ -42,11 +115,15 @@ function parseHubQrPayload(raw: string): HubDetails | null {
       const token = parsed.searchParams.get('t') || parsed.searchParams.get('token');
       const user = parsed.searchParams.get('u') || parsed.searchParams.get('user');
       const pass = parsed.searchParams.get('p') || parsed.searchParams.get('pass');
+      const serial = parsed.searchParams.get('s') || parsed.searchParams.get('serial');
+      const bs = parsed.searchParams.get('bs') || parsed.searchParams.get('bootstrapSecret');
       return {
         haBaseUrl: baseUrl || undefined,
         haLongLivedToken: token || undefined,
         haUsername: user || undefined,
         haPassword: pass || undefined,
+        dinodiaSerial: serial || undefined,
+        bootstrapSecret: bs || undefined,
       };
     } catch {
       // fall through
@@ -62,6 +139,8 @@ function parseHubQrPayload(raw: string): HubDetails | null {
           data.longLivedToken || data.token || data.t || data.llToken || data.haLongLivedToken,
         haUsername: data.haUsername || data.haAdminUser || data.u || undefined,
         haPassword: data.haPassword || data.haAdminPass || data.p || undefined,
+        dinodiaSerial: data.serial || data.s || undefined,
+        bootstrapSecret: data.bootstrapSecret || data.bs || undefined,
       };
     }
   } catch {
@@ -86,13 +165,14 @@ export function SetupHomeScreen() {
   const navigation = useNavigation<any>();
   const { setSession } = useSession();
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hubCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [form, setForm] = useState({
     username: '',
     password: '',
     email: '',
     confirmEmail: '',
+    dinodiaSerial: '',
+    bootstrapSecret: '',
     haBaseUrl: '',
     haLongLivedToken: '',
     haUsername: '',
@@ -108,7 +188,7 @@ export function SetupHomeScreen() {
   const [verifying, setVerifying] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [hubStatus, setHubStatus] = useState<'idle' | 'checking' | 'detected' | 'failed'>('idle');
+  const [hubStatus, setHubStatus] = useState<'idle' | 'detected' | 'failed'>('idle');
 
   const awaitingVerification = Boolean(challengeId);
 
@@ -128,23 +208,39 @@ export function SetupHomeScreen() {
   const verifyHubReachability = useCallback(
     async (baseUrl: string, token: string) => {
       if (!baseUrl.trim() || !token.trim()) return;
-      setHubStatus('checking');
+      setInfo(null);
+      setScanError(null);
+      setHubStatus('idle');
+
+      let parsed: URL | null = null;
       try {
-        const ok = await verifyHaCloudConnection(
-          { baseUrl: normalizeBaseUrl(baseUrl), longLivedToken: token.trim() },
-          4000
-        );
-        setHubStatus(ok ? 'detected' : 'failed');
-        if (ok) {
-          setScanError(null);
-          setInfo('Dinodia Hub detected.');
-        } else {
-          setScanError('Dinodia Hub could not be reached. Check Wi-Fi and try again.');
-        }
+        parsed = new URL(normalizeBaseUrl(baseUrl));
       } catch {
         setHubStatus('failed');
-        setScanError('Dinodia Hub could not be reached. Check Wi-Fi and try again.');
+        setScanError('Base URL in the QR is not valid. Ask the installer to regenerate it.');
+        return;
       }
+
+      const host = parsed.hostname.toLowerCase();
+      if (host.endsWith('.local')) {
+        setHubStatus('failed');
+        setScanError('Use the Home Assistant IP address; Android may not resolve .local hostnames.');
+        return;
+      }
+      if (parsed.port === '8099') {
+        setHubStatus('failed');
+        setScanError('Installer QR must use the Home Assistant URL (:8123), not the hub-agent URL (:8099).');
+        return;
+      }
+      if (!/^https?:$/.test(parsed.protocol)) {
+        setHubStatus('failed');
+        setScanError('Base URL must start with http:// or https://');
+        return;
+      }
+
+      setHubStatus('detected');
+      setScanError(null);
+      setInfo('QR scanned. Ready to create the homeowner account.');
     },
     []
   );
@@ -155,18 +251,24 @@ export function SetupHomeScreen() {
       let nextToken = '';
       let nextUser = '';
       let nextPass = '';
+      let nextSerial = '';
+      let nextBootstrap = '';
 
       setForm((prev) => {
         nextBase = normalizeBaseUrl(details.haBaseUrl || prev.haBaseUrl);
         nextToken = (details.haLongLivedToken || prev.haLongLivedToken).trim();
         nextUser = (details.haUsername || prev.haUsername).trim();
         nextPass = (details.haPassword || prev.haPassword).trim();
+        nextSerial = (details.dinodiaSerial || prev.dinodiaSerial).trim();
+        nextBootstrap = (details.bootstrapSecret || prev.bootstrapSecret).trim();
         return {
           ...prev,
           haBaseUrl: nextBase,
           haLongLivedToken: nextToken,
           haUsername: nextUser,
           haPassword: nextPass,
+          dinodiaSerial: nextSerial,
+          bootstrapSecret: nextBootstrap,
         };
       });
 
@@ -182,15 +284,18 @@ export function SetupHomeScreen() {
       form.haBaseUrl.trim().length > 0 &&
       form.haLongLivedToken.trim().length > 0 &&
       form.haUsername.trim().length > 0 &&
-      form.haPassword.trim().length > 0,
-    [form.haBaseUrl, form.haLongLivedToken, form.haPassword, form.haUsername]
+      form.haPassword.trim().length > 0 &&
+      form.dinodiaSerial.trim().length > 0 &&
+      form.bootstrapSecret.trim().length > 0,
+    [
+      form.haBaseUrl,
+      form.haLongLivedToken,
+      form.haPassword,
+      form.haUsername,
+      form.dinodiaSerial,
+      form.bootstrapSecret,
+    ]
   );
-
-  useEffect(() => {
-    if (hubDetected && hubStatus === 'idle') {
-      void verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
-    }
-  }, [form.haBaseUrl, form.haLongLivedToken, hubDetected, hubStatus, verifyHubReachability]);
 
   const resetVerification = () => {
     if (pollRef.current) {
@@ -294,7 +399,9 @@ export function SetupHomeScreen() {
       !form.haBaseUrl.trim() ||
       !form.haLongLivedToken.trim() ||
       !form.haUsername.trim() ||
-      !form.haPassword.trim()
+      !form.haPassword.trim() ||
+      !form.dinodiaSerial.trim() ||
+      !form.bootstrapSecret.trim()
     ) {
       setError('Scan the Dinodia Hub QR code to fill in the hub details.');
       return;
@@ -315,6 +422,8 @@ export function SetupHomeScreen() {
           haLongLivedToken: form.haLongLivedToken.trim(),
           deviceId: identity.deviceId,
           deviceLabel: identity.deviceLabel,
+          dinodiaSerial: form.dinodiaSerial.trim(),
+          bootstrapSecret: form.bootstrapSecret.trim(),
         }),
       });
 
@@ -324,6 +433,15 @@ export function SetupHomeScreen() {
       setChallengeId(data.challengeId);
       setChallengeStatus('PENDING');
       setInfo('Check your email to verify and finish setup.');
+      setForm((prev) => ({
+        ...prev,
+        haBaseUrl: '',
+        haLongLivedToken: '',
+        haUsername: '',
+        haPassword: '',
+        dinodiaSerial: '',
+        bootstrapSecret: '',
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'We could not finish setup.');
     } finally {
@@ -378,38 +496,6 @@ export function SetupHomeScreen() {
       setScanning(false);
     }
   };
-
-  useEffect(() => {
-    if (!hubDetected) {
-      if (hubCheckRef.current) {
-        clearInterval(hubCheckRef.current);
-        hubCheckRef.current = null;
-      }
-      return;
-    }
-
-    if (hubStatus === 'detected') {
-      if (hubCheckRef.current) {
-        clearInterval(hubCheckRef.current);
-        hubCheckRef.current = null;
-      }
-      return;
-    }
-
-    const checkHub = () => verifyHubReachability(form.haBaseUrl, form.haLongLivedToken);
-    void checkHub();
-
-    hubCheckRef.current = setInterval(() => {
-      void checkHub();
-    }, 5000);
-
-    return () => {
-      if (hubCheckRef.current) {
-        clearInterval(hubCheckRef.current);
-        hubCheckRef.current = null;
-      }
-    };
-  }, [hubDetected, hubStatus, form.haBaseUrl, form.haLongLivedToken, verifyHubReachability]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -477,12 +563,12 @@ export function SetupHomeScreen() {
                       keyboardType="email-address"
                       value={form.confirmEmail}
                       onChangeText={(v) => updateField('confirmEmail', v)}
-                    />
-                  </View>
-                </View>
+                />
+              </View>
+            </View>
 
-                <View style={styles.hubSection}>
-                  <Text style={styles.sectionLabel}>Dinodia Hub connection</Text>
+            <View style={styles.hubSection}>
+              <Text style={styles.sectionLabel}>Dinodia Hub connection</Text>
                   <View style={styles.hubStatusRow}>
                     <View
                       style={[
@@ -491,21 +577,17 @@ export function SetupHomeScreen() {
                           ? styles.hubDotDetected
                           : hubStatus === 'failed'
                           ? styles.hubDotFailed
-                          : hubStatus === 'checking'
-                          ? styles.hubDotChecking
                           : styles.hubDotIdle,
                       ]}
                     />
-                    <Text style={styles.hubStatusText}>
-                      {hubStatus === 'detected'
-                        ? 'Dinodia Hub detected'
-                        : hubStatus === 'checking'
-                        ? 'Checking Dinodia Hub…'
-                        : hubStatus === 'failed'
-                        ? 'Hub unreachable. Check Wi-Fi and try again.'
-                        : 'Scan the Dinodia Hub QR code to auto-fill hub details.'}
-                    </Text>
-                  </View>
+                      <Text style={styles.hubStatusText}>
+                        {hubStatus === 'detected'
+                          ? 'QR scanned. Ready to create the homeowner account.'
+                          : hubStatus === 'failed'
+                          ? scanError || 'QR details look incorrect.'
+                          : 'Scan the Dinodia Hub QR code to auto-fill hub details.'}
+                      </Text>
+                    </View>
 
                   <PrimaryButton
                     title={scanning ? 'Scanning…' : 'Scan Dinodia Hub QR code'}
@@ -639,7 +721,6 @@ const styles = StyleSheet.create({
   hubStatusText: { color: palette.textMuted, flex: 1 },
   hubDot: { width: 10, height: 10, borderRadius: 9999, backgroundColor: palette.textMuted },
   hubDotIdle: { backgroundColor: palette.textMuted },
-  hubDotChecking: { backgroundColor: palette.primary },
   hubDotDetected: { backgroundColor: palette.success },
   hubDotFailed: { backgroundColor: palette.danger },
   footer: { alignItems: 'center', marginTop: spacing.lg },
