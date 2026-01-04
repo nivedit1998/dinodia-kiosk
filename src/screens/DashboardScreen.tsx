@@ -42,6 +42,7 @@ import { buildBatteryPercentByDeviceGroup, getBatteryPercentForDevice } from '..
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
 import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 import type { HaConnection } from '../models/haConnection';
+import { fetchHomeModeSecrets, isHubConfiguringError, clearHomeModeSecrets } from '../api/haSecrets';
 
 const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
@@ -50,6 +51,8 @@ const { InlineWifiSetupLauncher } = NativeModules as {
 const CARD_BASE_ROW_HEIGHT = 130;
 const ALL_AREAS = 'ALL';
 const ALL_AREAS_LABEL = 'All Areas';
+const HUB_CONFIGURE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const HUB_CONFIGURE_RETRY_MS = 12000; // 12 seconds
 
 type DashboardContentProps = {
   userId: number;
@@ -87,12 +90,17 @@ function DashboardContent({
     () => (persistAreaSelection ? `tenant_selected_area_${userId}` : null),
     [persistAreaSelection, userId]
   );
+  const [hubConfiguring, setHubConfiguring] = useState(false);
+  const [hubConfiguringError, setHubConfiguringError] = useState<string | null>(null);
+  const [hasEverFetchedSecrets, setHasEverFetchedSecrets] = useState(false);
+  const [hubConfigStartMs, setHubConfigStartMs] = useState<number | null>(null);
 
   const handleLogout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
     try {
       await resetApp();
+      clearHomeModeSecrets();
     } finally {
       setLoggingOut(false);
     }
@@ -109,6 +117,71 @@ function DashboardContent({
   useEffect(() => {
     setSelected(null);
   }, [haMode]);
+
+  // Ensure Home Mode secrets are available; otherwise show configuring overlay and retry.
+  const ensureHubReady = useCallback(async (startedAtMs: number | null) => {
+    if (haMode !== 'home') return;
+    setHubConfiguringError(null);
+    // First try cached/persisted secrets to avoid flashing overlay on transient errors.
+    try {
+      const cached = await fetchHomeModeSecrets(false);
+      if (cached) {
+        setHasEverFetchedSecrets(true);
+        setHubConfiguring(false);
+        setHubConfiguringError(null);
+        return;
+      }
+    } catch {
+      // ignore and proceed to provisioning flow
+    }
+
+    setHubConfiguring(true);
+    const startedAt = startedAtMs ?? Date.now();
+    const loop = async (): Promise<void> => {
+      try {
+        await fetchHomeModeSecrets(true);
+        setHasEverFetchedSecrets(true);
+        setHubConfiguring(false);
+        setHubConfiguringError(null);
+        return;
+      } catch (err) {
+        const isConfiguring = isHubConfiguringError(err);
+        if (!isConfiguring) {
+          // Non-provisioning error: if we ever had secrets, don't block UI—show banner instead.
+          if (hasEverFetchedSecrets) {
+            setHubConfiguring(false);
+            setHubConfiguringError(null);
+          } else {
+            setHubConfiguring(false);
+            setHubConfiguringError(err instanceof Error ? err.message : 'Unable to configure hub.');
+          }
+          return;
+        }
+        const elapsed = Date.now() - startedAt;
+        if (elapsed >= HUB_CONFIGURE_TIMEOUT_MS) {
+          setHubConfiguring(false);
+          setHubConfiguringError('We are still configuring your Dinodia Hub. Please retry or log out.');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, HUB_CONFIGURE_RETRY_MS));
+        return loop();
+      }
+    };
+
+    await loop();
+  }, [haMode, hasEverFetchedSecrets]);
+
+  useEffect(() => {
+    if (haMode === 'home') {
+      const started = Date.now();
+      setHubConfigStartMs(started);
+      void ensureHubReady(started);
+    } else {
+      setHubConfiguring(false);
+      setHubConfiguringError(null);
+      setHubConfigStartMs(null);
+    }
+  }, [haMode, ensureHubReady]);
 
   useEffect(() => {
     if (!areaStorageKey) return;
@@ -293,9 +366,11 @@ function DashboardContent({
   const showErrorEmpty = !!error && devices.length === 0 && !showHomeWifiPrompt;
   const modeLabel = isCloud ? 'Cloud Mode' : 'Home Mode';
   const headerAreaLabel = selectedArea === ALL_AREAS ? ALL_AREAS_LABEL : selectedArea;
+  const showHubOverlay = haMode === 'home' && hubConfiguring;
   useEffect(() => {
     if (isCloud && remoteAccess.status === 'locked') {
-      void switchMode('home');
+      // Stay in cloud mode; show UI message instead of forcing Home.
+      return;
     }
   }, [isCloud, remoteAccess.status, switchMode]);
 
@@ -341,7 +416,9 @@ function DashboardContent({
         }}
       />
 
-      {error && !showHomeWifiPrompt ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {!showHubOverlay && error && !showHomeWifiPrompt ? (
+        <Text style={styles.errorBanner}>{error}</Text>
+      ) : null}
 
       <View style={styles.content}>
         <FlatList
@@ -482,9 +559,44 @@ function DashboardContent({
           haMode === 'cloud' ? 'Home network is not reachable right now' : 'Cloud access is not enabled yet'
         }
       />
-      </SafeAreaView>
-    );
-  }
+
+      {showHubOverlay && (
+        <View style={styles.hubOverlay} pointerEvents="auto">
+          <View style={styles.hubOverlayCard}>
+            <View style={{ alignItems: 'center', gap: spacing.sm }}>
+              <Text style={styles.hubOverlayTitle}>Configuring your Dinodia Hub</Text>
+              <Text style={styles.hubOverlaySub}>
+                This can take a few minutes while your hub finishes syncing.
+              </Text>
+            </View>
+            {hubConfiguringError ? (
+              <View style={{ width: '100%', gap: spacing.xs }}>
+                <TouchableOpacity
+                  style={[styles.retryBtn, { backgroundColor: palette.primary }]}
+                  onPress={() => {
+                    setHubConfiguringError(null);
+                    clearHomeModeSecrets();
+                    setHubConfigStartMs(null);
+                    void ensureHubReady();
+                  }}
+                >
+                  <Text style={styles.retryBtnText}>Retry</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+                  <Text style={styles.logoutBtnText}>Logout</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={{ width: '100%', alignItems: 'center', paddingTop: spacing.sm }}>
+                <Text style={styles.hubOverlaySub}>Syncing…</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+    </SafeAreaView>
+  );
+}
 
 type DashboardScreenProps = {
   role: Role;
@@ -593,4 +705,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     alignItems: 'center',
   },
+  hubOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    zIndex: 20,
+  },
+  hubOverlayCard: {
+    width: '100%',
+    maxWidth: 360,
+    padding: spacing.lg,
+    backgroundColor: '#fff',
+    borderRadius: radii.xl,
+    ...shadows.soft,
+    gap: spacing.md,
+  },
+  hubOverlayTitle: { fontSize: 18, fontWeight: '700', color: palette.text, textAlign: 'center' },
+  hubOverlaySub: { fontSize: 14, color: palette.textMuted, textAlign: 'center' },
+  retryBtn: {
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    alignItems: 'center',
+  },
+  retryBtnDisabled: {
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    backgroundColor: '#e5e7eb',
+  },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
+  logoutBtn: {
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  logoutBtnText: { color: palette.text, fontWeight: '700' },
 });

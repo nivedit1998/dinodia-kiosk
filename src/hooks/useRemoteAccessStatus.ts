@@ -35,8 +35,9 @@ export function useRemoteAccessStatus(mode: HaMode) {
       })
       .catch(() => {
         if (!active) return;
-        setStatus('locked');
-        setMessage(LOCKED_MESSAGE);
+        // Treat transient errors as unknown; do not auto-lock.
+        setStatus('checking');
+        setMessage('Checking remote access…');
       });
 
     return () => {

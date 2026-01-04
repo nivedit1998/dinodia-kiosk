@@ -84,7 +84,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         await CookieManager.flush().catch(() => undefined);
       }
       await removeKey(SESSION_KEY).catch(() => undefined);
-      clearHomeModeSecrets();
+      clearHomeModeSecrets({ deletePersisted: true });
     } finally {
       setSessionState({ user: null, haConnection: null });
       setHaModeState('home');
@@ -200,8 +200,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void verifyUserStillExists();
-      } else {
-        clearHomeModeSecrets();
       }
     });
     return () => {
@@ -258,7 +256,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await removeKey(SESSION_KEY);
     await clearPlatformToken().catch(() => undefined);
     await clearPlatformCookie().catch(() => undefined);
-    clearHomeModeSecrets();
+    clearHomeModeSecrets({ deletePersisted: true });
     if (userId) {
       await clearAllDeviceCacheForUser(userId).catch(() => undefined);
     }

@@ -24,6 +24,7 @@ import { fetchChallengeStatus, completeStepUpChallenge, resendChallenge } from '
 import { getDeviceIdentity } from '../utils/deviceIdentity';
 import { fetchKioskContext } from '../api/dinodia';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
+import CookieManager from '@react-native-cookies/cookies';
 
 const LOG_TAG = '[RemoteAccessSetup]';
 
@@ -60,28 +61,55 @@ function buildAutoLoginScript(username: string, password: string) {
     (function() {
       const USERNAME = ${JSON.stringify(username)};
       const PASSWORD = ${JSON.stringify(password)};
-      const MAX_ATTEMPTS = 8;
+      const MAX_ATTEMPTS = 60;
       let attempts = 0;
+
+      function walk(root, predicate) {
+        if (!root) return null;
+        const stack = [root];
+        while (stack.length) {
+          const node = stack.pop();
+          if (!node) continue;
+          try {
+            if (predicate(node)) return node;
+          } catch (e) {}
+          if (node.shadowRoot) stack.push(node.shadowRoot);
+          const children = node.children || [];
+          for (let i = children.length - 1; i >= 0; i -= 1) {
+            stack.push(children[i]);
+          }
+        }
+        return null;
+      }
+
+      function findInput(predicate) {
+        return walk(document, (el) => {
+          if (!(el instanceof HTMLInputElement)) return false;
+          return predicate(el);
+        });
+      }
 
       function isAuthPath() {
         try {
           const path = window.location.pathname || '';
-          return path.startsWith('/auth/authorize') || path.startsWith('/auth/login');
+          return (
+            path.startsWith('/auth/authorize') ||
+            path.startsWith('/auth/login') ||
+            path.startsWith('/auth/flow') ||
+            path.startsWith('/auth/mfa')
+          );
         } catch (e) {
           return false;
         }
       }
 
       function findSubmitButton() {
-        const selectors = [
-          'button[type="submit"]',
-          'mwc-button[slot="primaryAction"]',
-          'ha-progress-button',
-          'ha-button',
-          'button'
-        ];
+        const selectors = ['button[type="submit"]', 'mwc-button', 'ha-progress-button', 'ha-button', 'button'];
         for (const sel of selectors) {
-          const el = document.querySelector(sel);
+          const el = walk(document, (n) => {
+            if (!(n instanceof HTMLElement)) return false;
+            return Boolean(n.matches && n.matches(sel) && typeof n.click === 'function');
+          });
           if (el && typeof el.click === 'function') return el;
         }
         return null;
@@ -90,13 +118,10 @@ function buildAutoLoginScript(username: string, password: string) {
       function fillAndClick() {
         if (!isAuthPath()) return false;
         const userInput =
-          document.querySelector('input[name="username"]') ||
-          document.querySelector('input#username') ||
-          document.querySelector('input[type="email"]') ||
-          document.querySelector('input[type="text"]');
+          findInput((el) => el.name === 'username' || el.id === 'username' || el.type === 'email' || el.autocomplete === 'username') ||
+          findInput((el) => el.type === 'text');
         const passInput =
-          document.querySelector('input[type="password"]') ||
-          document.querySelector('input#password');
+          findInput((el) => el.type === 'password' || el.id === 'password' || el.autocomplete === 'current-password');
         if (!userInput || !passInput) return false;
         userInput.value = USERNAME;
         passInput.value = PASSWORD;
@@ -143,6 +168,7 @@ export function RemoteAccessSetupScreen() {
   const [leaseExpiresAt, setLeaseExpiresAt] = useState<string | null>(null);
   const [haCreds, setHaCreds] = useState<{ haUsername: string; haPassword: string } | null>(null);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [lockdownEnabled, setLockdownEnabled] = useState(false);
   const [verifyState, setVerifyState] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -200,7 +226,17 @@ export function RemoteAccessSetupScreen() {
     (async () => {
       try {
         const secrets = await fetchHomeModeSecrets();
-        if (active) setBaseUrl(secrets.baseUrl.replace(/\/+$/, ''));
+        if (active) {
+          const hubBase = secrets.baseUrl.replace(/\/+$/, '');
+          try {
+            const url = new URL(hubBase);
+            // Force HA UI port to 8123 (hub-agent stays on 8099).
+            url.port = '8123';
+            setBaseUrl(`${url.origin}`);
+          } catch {
+            setBaseUrl(hubBase);
+          }
+        }
       } catch (err) {
         if (__DEV__) {
           // eslint-disable-next-line no-console
@@ -214,7 +250,17 @@ export function RemoteAccessSetupScreen() {
     };
   }, [user?.id]);
 
-  const accountUrl = useMemo(() => (baseUrl ? `${baseUrl}/config/cloud/account` : null), [baseUrl]);
+  const accountUrl = useMemo(() => {
+    if (!baseUrl) return null;
+    try {
+      const u = new URL(baseUrl);
+      // Ensure port is 8123 and origin-only for HA UI.
+      u.port = '8123';
+      return `${u.origin}/config/cloud/account`;
+    } catch {
+      return `${baseUrl}/config/cloud/account`;
+    }
+  }, [baseUrl]);
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
   const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
   const isHttpsHa = useMemo(() => {
@@ -340,18 +386,32 @@ export function RemoteAccessSetupScreen() {
     }
   }, [loggingOut, resetApp]);
 
+  const closeWeb = useCallback(async () => {
+    setWebVisible(false);
+    setLockdownEnabled(false);
+    setWebKey((k) => k + 1);
+    try {
+      await CookieManager.clearAll(true);
+      if (CookieManager.flush) {
+        await CookieManager.flush();
+      }
+    } catch {
+      // ignore cookie clear errors
+    }
+  }, []);
+
   const openWeb = useCallback(() => {
     if (!leaseActive || !accountUrl) {
       Alert.alert('Verification required', 'Verify your email to continue.');
       return;
     }
+    setLockdownEnabled(false);
     setWebVisible(true);
     setWebKey((k) => k + 1);
   }, [accountUrl, leaseActive]);
 
   const onWebMessage = useCallback(
     async (event: any) => {
-      if (saveInFlightRef.current) return;
       const raw = event?.nativeEvent?.data;
       if (!raw || typeof raw !== 'string') return;
       let parsed: any = null;
@@ -360,6 +420,11 @@ export function RemoteAccessSetupScreen() {
       } catch {
         return;
       }
+      if (parsed?.type === 'ACCOUNT_UI_READY') {
+        setLockdownEnabled(true);
+        return;
+      }
+      if (saveInFlightRef.current) return;
       if (parsed?.type !== 'CLOUD_URL') return;
       const normalized = normalizeCloudUrl(parsed?.url);
       if (!normalized) return;
@@ -440,25 +505,39 @@ export function RemoteAccessSetupScreen() {
   const shouldStartLoad = useCallback(
     (req: any) => {
       try {
-        const u = new URL(req.url);
+        const urlString = req?.url;
+        if (!urlString) return false;
+        if (urlString.startsWith('about:') || urlString.startsWith('blob:')) return true;
+        const u = new URL(urlString);
         const host = u.host.toLowerCase();
-        const isAllowedHost = allowedHosts.has(host);
-        const path = u.pathname || '/';
-        const isAllowedPath =
-          isAllowedHost && (path.startsWith('/config/cloud/account') || path.startsWith('/auth/'));
-        const isAllowedProtocol = u.protocol === 'https:' || u.protocol === 'http:';
-        return isAllowedProtocol && isAllowedPath;
+        const protocol = u.protocol.toLowerCase();
+        if (!allowedHosts.has(host)) return false;
+        if (!['http:', 'https:', 'ws:', 'wss:'].includes(protocol)) return false;
+        // When locked down, only allow hub host (baseUrl host); block others (including nabucasa).
+        if (lockdownEnabled) {
+          try {
+            const hubHost = new URL(baseUrl ?? '').host.toLowerCase();
+            if (host !== hubHost) return false;
+            // Allow all paths on the hub host, except block top-frame auth redirects.
+            if (u.pathname.startsWith('/auth/')) return false;
+          } catch {
+            // if parsing baseUrl fails, fall back to allow
+          }
+        }
+        return true;
       } catch {
         return false;
       }
     },
-    [allowedHosts]
+    [allowedHosts, lockdownEnabled, baseUrl]
   );
 
   const injectedJs = useMemo(() => {
     return `
       (function() {
         let posted = false;
+        let accountReadySent = false;
+        const ACCOUNT_URL = ${JSON.stringify(accountUrl || '')};
 
         function withinShadow(root, predicate) {
           try {
@@ -491,6 +570,60 @@ export function RemoteAccessSetupScreen() {
           return direct;
         }
 
+        function isAccountPageRendered() {
+          try {
+            const path = (window.location && window.location.pathname) || '';
+            if (!path.startsWith('/config/cloud/account')) return false;
+            // Heuristic: look for cloud settings form elements.
+            const selector = 'ha-card, ha-settings-row, ha-form, mwc-button';
+            const el = withinShadow(document, (node) => {
+              if (!(node instanceof HTMLElement)) return false;
+              return node.matches && node.matches(selector);
+            });
+            return Boolean(el);
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function enforceAccountOnly(accountUrl) {
+          try {
+            const goAccount = () => {
+              if (location.pathname !== '/config/cloud/account') {
+                location.replace(accountUrl);
+              }
+            };
+            const blockNav = (e, targetHref) => {
+              try {
+                const u = new URL(targetHref, location.href);
+                if (u.pathname !== '/config/cloud/account') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  goAccount();
+                  return false;
+                }
+              } catch (err) {}
+              return true;
+            };
+            document.addEventListener('click', function(e) {
+              let el = e.target;
+              while (el && el.tagName && el.tagName.toLowerCase() !== 'a') {
+                el = el.parentElement;
+              }
+              if (el && el.href) {
+                blockNav(e, el.href);
+              }
+            }, true);
+            const origPush = history.pushState;
+            const origReplace = history.replaceState;
+            history.pushState = function(a,b,url){ if (typeof url==='string') { const u=new URL(url, location.href); if (u.pathname !== '/config/cloud/account') { return; } } return origPush.apply(this, arguments); };
+            history.replaceState = function(a,b,url){ if (typeof url==='string') { const u=new URL(url, location.href); if (u.pathname !== '/config/cloud/account') { return; } } return origReplace.apply(this, arguments); };
+            window.addEventListener('popstate', goAccount, true);
+            goAccount();
+            setInterval(goAccount, 1500);
+          } catch (err) {}
+        }
+
         function redact(el) {
           try {
             el.value = 'Saved';
@@ -504,6 +637,17 @@ export function RemoteAccessSetupScreen() {
           if (posted) return;
           try {
             const path = (window.location && window.location.pathname) || '';
+            if (typeof path === 'string') {
+              if (path.startsWith('/config/cloud/account') && !accountReadySent && isAccountPageRendered()) {
+                accountReadySent = true;
+                window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'ACCOUNT_UI_READY' }));
+                enforceAccountOnly(ACCOUNT_URL);
+              }
+              if (!path.startsWith('/config/cloud/account')) {
+                setTimeout(tick, 800);
+                return;
+              }
+            }
             if (typeof path === 'string' && !path.startsWith('/config/cloud/account')) {
               setTimeout(tick, 800);
               return;
@@ -531,26 +675,16 @@ export function RemoteAccessSetupScreen() {
       try {
         const url = navState?.url || '';
         if (!url) return;
-        const parsed = new URL(url);
-        const host = parsed.host.toLowerCase();
-        const isAllowedHost = allowedHosts.has(host);
-        const path = parsed.pathname || '/';
-        const isAllowedPath =
-          isAllowedHost &&
-          (path.startsWith('/config/cloud/account') || path.startsWith('/auth/'));
-        if (!isAllowedPath) {
-          const target = accountUrl || url;
-          if (webRef.current) {
-            webRef.current.stopLoading();
-            const safeTarget = JSON.stringify(target);
-            webRef.current.injectJavaScript(`window.location.replace(${safeTarget}); true;`);
-          }
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.log(`${LOG_TAG}[nav]`, url);
         }
+        // No path gating here; allow HA to complete its own redirects/auth flow.
       } catch {
         // ignore
       }
     },
-    [accountUrl, allowedHosts]
+    []
   );
 
   return (
@@ -599,7 +733,7 @@ export function RemoteAccessSetupScreen() {
           {!isHttpsHa && (
             <View style={styles.warning}>
               <Text style={styles.warningText}>
-                Auto-login is disabled on HTTP. Please sign in to Home Assistant manually when prompted.
+                Using HTTP. Stay on the same Wi‑Fi as your Dinodia Hub while we auto-login and save remote access.
               </Text>
             </View>
           )}
@@ -724,11 +858,11 @@ export function RemoteAccessSetupScreen() {
         </View>
       </ScrollView>
 
-          <Modal visible={webVisible} animationType="slide" onRequestClose={() => setWebVisible(false)}>
+          <Modal visible={webVisible} animationType="slide" onRequestClose={closeWeb}>
             <SafeAreaView style={styles.webRoot}>
               <View style={styles.webHeader}>
                 <Text style={styles.webTitle}>Home Assistant</Text>
-                <PrimaryButton title="Close" variant="ghost" onPress={() => setWebVisible(false)} />
+                <PrimaryButton title="Close" variant="ghost" onPress={closeWeb} />
               </View>
               {accountUrl && haCreds ? (
                 <WebView
@@ -738,10 +872,11 @@ export function RemoteAccessSetupScreen() {
                   onShouldStartLoadWithRequest={shouldStartLoad}
                   onMessage={onWebMessage}
                   onNavigationStateChange={onNavStateChange}
-                  injectedJavaScript={isHttpsHa ? buildAutoLoginScript(haCreds.haUsername, haCreds.haPassword) : undefined}
+                  injectedJavaScript={buildAutoLoginScript(haCreds.haUsername, haCreds.haPassword)}
                   injectedJavaScriptBeforeContentLoaded={injectedJs}
                   javaScriptEnabled
                   domStorageEnabled
+                  incognito
                   setSupportMultipleWindows={false}
                   javaScriptCanOpenWindowsAutomatically={false}
                   allowFileAccess={false}

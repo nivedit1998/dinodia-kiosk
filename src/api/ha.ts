@@ -8,6 +8,13 @@ export type HaConnectionLike = {
   longLivedToken: string;
 };
 
+type HaRefresher = (failedHa: HaConnectionLike) => Promise<HaConnectionLike | null>;
+let homeSecretsRefresher: HaRefresher | null = null;
+
+export function setHomeSecretsRefresher(refresher: HaRefresher | null) {
+  homeSecretsRefresher = refresher;
+}
+
 export type HAState = {
   entity_id: string;
   state: string;
@@ -100,26 +107,56 @@ async function callHomeAssistantAPI<T>(
   timeoutMs = 5000
 ): Promise<T> {
   assertHaUrlAllowed(ha.baseUrl);
-  let res: Response;
-  try {
-    res = await fetchWithTimeout(buildHaUrl(ha.baseUrl, path), {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${ha.longLivedToken}`,
-        'Content-Type': 'application/json',
-        ...(init?.headers || {}),
-      },
-    }, timeoutMs);
-  } catch (err) {
-    throw describeNetworkFailure(ha.baseUrl, path, err);
-  }
-  if (!res.ok) {
+  let attempt = 0;
+  let currentHa = ha;
+
+  while (attempt < 2) {
+    attempt += 1;
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(
+        buildHaUrl(currentHa.baseUrl, path),
+        {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${currentHa.longLivedToken}`,
+            'Content-Type': 'application/json',
+            ...(init?.headers || {}),
+          },
+        },
+        timeoutMs
+      );
+    } catch (err) {
+      throw describeNetworkFailure(currentHa.baseUrl, path, err);
+    }
+
+    if (res.ok) {
+      try {
+        return (await res.json()) as T;
+      } catch {
+        return {} as T;
+      }
+    }
+
+    if ((res.status === 401 || res.status === 403) && attempt === 1 && homeSecretsRefresher) {
+      try {
+        const refreshed = await homeSecretsRefresher(currentHa);
+        if (refreshed && refreshed.baseUrl === currentHa.baseUrl) {
+          currentHa = refreshed;
+          continue;
+        }
+      } catch {
+        // ignore refresh failures and fall through to error handling
+      }
+    }
+
     const text = await res.text().catch(() => '');
     throw new Error(
       `Dinodia Hub could not complete that request (${res.status}). ${text || 'Please try again.'}`
     );
   }
-  return (await res.json()) as T;
+
+  throw new Error('Dinodia Hub request failed. Please try again.');
 }
 
 export async function callHaApi<T>(
@@ -141,26 +178,18 @@ async function renderHomeAssistantTemplate<T>(
   timeoutMs = 5000
 ): Promise<T> {
   const path = '/api/template';
-  let res: Response;
-  try {
-    res = await fetchWithTimeout(buildHaUrl(ha.baseUrl, path), {
+  return callHomeAssistantAPI<T>(
+    ha,
+    path,
+    {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${ha.longLivedToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ template }),
-    }, timeoutMs);
-  } catch (err) {
-    throw describeNetworkFailure(ha.baseUrl, path, err);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(
-      `Dinodia Hub could not prepare that data (${res.status}). ${text || 'Please try again.'}`
-    );
-  }
-  return (await res.json()) as T;
+    },
+    timeoutMs
+  );
 }
 
 export async function getDevicesWithMetadata(
@@ -235,30 +264,18 @@ export async function callHaService(
   timeoutMs = 5000
 ) {
   const path = `/api/services/${domain}/${service}`;
-  let res: Response;
-  try {
-    res = await fetchWithTimeout(buildHaUrl(ha.baseUrl, path), {
+  return callHomeAssistantAPI<any>(
+    ha,
+    path,
+    {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${ha.longLivedToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(data),
-    }, timeoutMs);
-  } catch (err) {
-    throw describeNetworkFailure(ha.baseUrl, path, err);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(
-      `Dinodia Hub could not apply that action (${res.status}). ${text || 'Please try again.'}`
-    );
-  }
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
+    },
+    timeoutMs
+  );
 }
 
 export async function probeHaReachability(
@@ -266,22 +283,38 @@ export async function probeHaReachability(
   timeoutMs = 2000
 ): Promise<boolean> {
   const url = buildHaUrl(ha.baseUrl, '/api/');
-  try {
-    const res = await fetchWithTimeout(
-      url,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${ha.longLivedToken}`,
+  let attempt = 0;
+  let currentHa = ha;
+  let currentUrl = buildHaUrl(currentHa.baseUrl, '/api/');
+
+  while (attempt < 2) {
+    attempt += 1;
+    try {
+      const res = await fetchWithTimeout(
+        currentUrl,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${currentHa.longLivedToken}`,
+          },
         },
-      },
-      timeoutMs
-    );
-    // Any HTTP response means the host is reachable; content not important here.
-    return res.status > 0;
-  } catch {
-    return false;
+        timeoutMs
+      );
+      if (res.ok) return true;
+      if ((res.status === 401 || res.status === 403) && attempt === 1 && homeSecretsRefresher) {
+        const refreshed = await homeSecretsRefresher(currentHa).catch(() => null);
+        if (refreshed && refreshed.baseUrl === currentHa.baseUrl) {
+          currentHa = refreshed;
+          currentUrl = buildHaUrl(currentHa.baseUrl, '/api/');
+          continue;
+        }
+      }
+      return res.status > 0;
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 export async function fetchHaState(
@@ -295,20 +328,13 @@ export async function detectNabuCasaCloudUrl(
   ha: HaConnectionLike,
   timeoutMs = 4000
 ): Promise<string | null> {
-  const url = buildHaUrl(ha.baseUrl, '/api/config');
   try {
-    const res = await fetchWithTimeout(
-      url,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${ha.longLivedToken}`,
-        },
-      },
+    const data = await callHomeAssistantAPI<{ external_url?: string }>(
+      ha,
+      '/api/config',
+      { method: 'GET' },
       timeoutMs
     );
-    if (!res.ok) return null;
-    const data = (await res.json().catch(() => null)) as { external_url?: string } | null;
     const candidate = (data?.external_url ?? '').trim();
     if (candidate && candidate.includes('.ui.nabu.casa')) {
       return candidate.replace(/\/+$/, '');
@@ -386,19 +412,17 @@ export async function verifyHaCloudConnection(
   timeoutMs = 4000
 ): Promise<boolean> {
   try {
-    const res = await fetchWithTimeout(
-      buildHaUrl(ha.baseUrl, '/api/config'),
+    await callHomeAssistantAPI(
+      ha,
+      '/api/config',
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${ha.longLivedToken}`,
           'Content-Type': 'application/json',
         },
       },
       timeoutMs
     );
-    if (!res.ok) return false;
-    await res.json().catch(() => ({}));
     return true;
   } catch {
     return false;
