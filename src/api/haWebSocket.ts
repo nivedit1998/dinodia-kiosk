@@ -21,7 +21,8 @@ export async function haWsCall<T>(
   ha: HaConnectionLike,
   type: string,
   payload: Record<string, unknown> = {},
-  timeoutMs = 15000
+  timeoutMs = 15000,
+  allowAuthRetry = true
 ): Promise<T> {
   const wsUrl = buildWsUrl(ha.baseUrl);
   return new Promise((resolve, reject) => {
@@ -77,6 +78,31 @@ export async function haWsCall<T>(
       }
 
       if (data.type === 'auth_invalid') {
+        // One-time retry: refresh home secrets and reconnect with a fresh token if available.
+        if (allowAuthRetry) {
+          (async () => {
+            try {
+              const { fetchHomeModeSecrets } = await import('./haSecrets');
+              const refreshed = await fetchHomeModeSecrets(true);
+              const normalizedBase = refreshed.baseUrl.replace(/\/+$/, '');
+              if (normalizedBase === ha.baseUrl.replace(/\/+$/, '')) {
+                const retried = await haWsCall<T>(
+                  { baseUrl: normalizedBase, longLivedToken: refreshed.longLivedToken },
+                  type,
+                  payload,
+                  timeoutMs,
+                  false
+                );
+                finish(undefined, retried);
+                return;
+              }
+            } catch {
+              // ignore and fall through to failure
+            }
+            finish(new Error('Home Assistant authentication failed.'));
+          })();
+          return;
+        }
         finish(new Error('Home Assistant authentication failed.'));
         return;
       }
