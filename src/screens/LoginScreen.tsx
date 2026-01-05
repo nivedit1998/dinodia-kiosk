@@ -339,6 +339,17 @@ export function LoginScreen() {
                 />
 
                 <TouchableOpacity
+                  onPress={() => navigation.navigate('ForgotPassword')}
+                  activeOpacity={0.85}
+                  disabled={loading || verifying}
+                  style={{ alignSelf: 'flex-end', marginTop: spacing.xs }}
+                >
+                  <Text style={{ color: palette.primary, fontWeight: '700' }}>
+                    Forgot password?
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   style={styles.wifiButton}
                   onPress={handleOpenWifiSetup}
                   activeOpacity={0.85}

@@ -45,6 +45,7 @@ const KIOSK_LOGOUT_PATH = '/api/auth/kiosk-logout';
 const CHALLENGE_PATH = '/api/auth/challenges';
 const ADMIN_CHANGE_PASSWORD_PATH = '/api/admin/profile/change-password';
 const TENANT_CHANGE_PASSWORD_PATH = '/api/tenant/profile/change-password';
+const PASSWORD_RESET_REQUEST_PATH = '/api/auth/password-reset/request';
 
 export async function loginWithCredentials(params: {
   username: string;
@@ -212,4 +213,15 @@ export async function logoutRemote(): Promise<void> {
     clearPlatformToken().catch(() => undefined),
     clearPlatformCookie().catch(() => undefined),
   ]);
+}
+
+export async function requestPasswordReset(identifier: string): Promise<void> {
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    throw new Error('Enter your username or email to continue.');
+  }
+  await platformFetch<{ ok?: boolean }>(PASSWORD_RESET_REQUEST_PATH, {
+    method: 'POST',
+    body: JSON.stringify({ identifier: trimmed }),
+  });
 }
