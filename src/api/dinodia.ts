@@ -33,6 +33,12 @@ type KioskContextResponse = {
   accessRules?: AccessRule[];
 };
 
+type BlindTravelSecondsResponse = {
+  ok?: boolean;
+  overrides?: { entityId: string; blindTravelSeconds: number | null }[];
+  error?: string;
+};
+
 export async function fetchKioskContext(): Promise<{
   user: UserWithRelations;
   haConnection: HaConnectionSafe | null;
@@ -119,7 +125,7 @@ export async function fetchDevicesForUser(
     throw new Error(message);
   }
 
-  const devices: UIDevice[] = enriched.map((d) => {
+  let devices: UIDevice[] = enriched.map((d) => {
     const areaName = d.areaName ?? null;
     const labels = d.labels;
     const labelCategory = classifyDeviceByLabel(labels) ?? d.labelCategory ?? null;
@@ -144,9 +150,45 @@ export async function fetchDevicesForUser(
 
   if (user.role === 'TENANT') {
     const rules = (user.accessRules ?? []) as AccessRule[];
-    return devices.filter(
+    devices = devices.filter(
       (d) => d.areaName !== null && rules.some((r) => r.area === d.areaName)
     );
+  }
+
+  // Pull per-blind overrides from the platform (home mode only).
+  const coverEntityIds = devices
+    .filter((d) => d.entityId.startsWith('cover.'))
+    .map((d) => d.entityId);
+  if (coverEntityIds.length > 0) {
+    try {
+      const { data } = await platformFetch<BlindTravelSecondsResponse>(
+        '/api/kiosk/blinds/travel-seconds',
+        {
+          method: 'POST',
+          body: JSON.stringify({ entityIds: coverEntityIds }),
+        }
+      );
+      const overrides = Array.isArray(data.overrides) ? data.overrides : [];
+      const overrideMap = new Map<string, number>();
+      for (const row of overrides) {
+        const value = row?.blindTravelSeconds;
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+          overrideMap.set(row.entityId, value);
+        }
+      }
+      if (overrideMap.size > 0) {
+        devices = devices.map((d) =>
+          overrideMap.has(d.entityId)
+            ? { ...d, blindTravelSeconds: overrideMap.get(d.entityId) ?? null }
+            : d
+        );
+      }
+    } catch (err) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to fetch blind travel seconds overrides:', err);
+      }
+    }
   }
 
   return devices;
