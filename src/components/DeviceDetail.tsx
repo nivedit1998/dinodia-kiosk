@@ -333,7 +333,8 @@ function renderActionControl(params: {
     return (
       <View key={action.id} style={styles.sliderBlock}>
         <Text style={styles.sliderLabel}>
-          {action.label} {Math.round(value)}{action.id.includes('temperature') ? '°' : '%'}
+          {action.label} {Math.round(value)}
+          {action.id.includes('temp') || action.command === 'boiler/set_temperature' ? '°' : '%'}
         </Text>
         <Slider
           minimumValue={action.min}

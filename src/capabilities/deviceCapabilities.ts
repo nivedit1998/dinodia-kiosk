@@ -378,7 +378,7 @@ export const CAPABILITIES: Record<string, DeviceCapability> = {
         min: 10,
         max: 35,
         step: 1,
-        surfaces: makeSurfaces('automation'),
+        surfaces: makeSurfaces('dashboard', 'automation'),
         primary: true,
       },
     ],

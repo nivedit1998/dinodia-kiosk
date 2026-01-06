@@ -48,13 +48,14 @@ export const DeviceCard = memo(function DeviceCard({
   const hasPending = pendingCommand !== null;
   const openPending = pendingCommand === 'blind/open';
   const closePending = pendingCommand === 'blind/close';
+  const CONTROL_HEIGHT = 44;
 
   const sizeStyles =
     size === 'small'
-      ? { padding: spacing.md, borderRadius: radii.lg, minHeight: 90 }
+      ? { padding: spacing.md, borderRadius: radii.lg }
       : size === 'medium'
-      ? { padding: spacing.lg, borderRadius: radii.xl, minHeight: 120 }
-      : { padding: spacing.xl, borderRadius: radii.xl, minHeight: 150 };
+      ? { padding: spacing.lg, borderRadius: radii.xl }
+      : { padding: spacing.xl, borderRadius: radii.xl };
 
   const nameStyle =
     size === 'small'
@@ -126,144 +127,163 @@ export const DeviceCard = memo(function DeviceCard({
         })(),
       ]}
     >
-      <View style={styles.topRow}>
-        <Text style={[styles.label, { color: active ? '#0f172a' : '#94a3b8' }]}>{label}</Text>
-        {batteryDisplay && (
-          <View
-            style={[
-              styles.batteryPill,
-              { backgroundColor: batteryDisplay.bg, alignSelf: 'flex-start' },
-            ]}
-          >
-            <Text
-              style={[styles.batteryText, { color: batteryDisplay.fg }]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {batteryDisplay.text}
-            </Text>
-          </View>
-        )}
-      </View>
       <View style={styles.body}>
-        <Text style={[styles.name, nameStyle, { color: active ? '#0f172a' : '#94a3b8' }]}>
-          {device.name}
-        </Text>
-        <Text
-          style={[styles.secondary, secondaryStyle, { color: active ? '#475569' : '#9ca3af' }]}
-          numberOfLines={1}
-        >
-          {secondaryText}
-        </Text>
-        {label === 'Blind' ? (
-          <View style={styles.blindActionsRow}>
-            {getBlindActions(actions).map((action) => {
-              const isOpen = action.command === 'blind/open';
-              const disabled = hasPending || (isOpen ? blindPosition === 100 : blindPosition === 0);
-              const isPending = pendingCommand === action.command;
-              return (
-                <TouchableOpacity
-                  key={action.id}
-                  onPress={() => sendAction(action)}
-                  activeOpacity={0.85}
-                  disabled={disabled}
-              style={[
-                styles.secondaryActionButton,
-                {
-                  backgroundColor: active ? preset.iconActiveBackground : '#0f172a',
-                  opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
-                },
-              ]}
+        <View style={styles.content}>
+          <View style={styles.headerRow}>
+            <Text
+              style={[styles.name, nameStyle, { color: active ? '#0f172a' : '#94a3b8' }]}
+              numberOfLines={2}
+              ellipsizeMode="tail"
+              minimumFontScale={0.9}
+              adjustsFontSizeToFit
             >
-                  {isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryActionText}>{action.label}</Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+              {device.name}
+            </Text>
+            {batteryDisplay && (
+              <View style={[styles.batteryPill, { backgroundColor: batteryDisplay.bg }]}>
+                <Text
+                  style={[styles.batteryText, { color: batteryDisplay.fg }]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {batteryDisplay.text}
+                </Text>
+              </View>
+            )}
           </View>
-        ) : label === 'Boiler' ? (
-          <View style={styles.boilerControlsRow}>
-            <TouchableOpacity
-              onPress={() => {
-                const down = actions.find(
-                  (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_down'
-                );
-                if (down) sendAction(down);
-              }}
-              activeOpacity={0.85}
-              disabled={hasPending}
-              style={[
-                styles.boilerButton,
-                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
-                hasPending && styles.primaryActionButtonDisabled,
-              ]}
-            >
-              {pendingCommand === 'boiler/temp_down' ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.primaryActionText}>- Temp</Text>
-              )}
-            </TouchableOpacity>
+          <Text
+            style={[styles.secondary, secondaryStyle, { color: active ? '#475569' : '#9ca3af' }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {secondaryText}
+          </Text>
+        </View>
 
-            <View style={styles.boilerTarget}>
-              <Text style={styles.boilerTargetLabel}>Target</Text>
-              <Text style={styles.boilerTargetValue}>
-                {typeof attrs.temperature === 'number'
-                  ? `${Math.round(attrs.temperature)}°`
-                  : typeof (attrs as any).target_temp === 'number'
-                  ? `${Math.round((attrs as any).target_temp)}°`
-                  : '—'}
-              </Text>
+        <View style={styles.footer}>
+          {label === 'Blind' ? (
+            <View style={styles.blindActionsRow}>
+              {getBlindActions(actions).map((action) => {
+                const isOpen = action.command === 'blind/open';
+                const disabled =
+                  hasPending || (isOpen ? blindPosition === 100 : blindPosition === 0);
+                const isPending = pendingCommand === action.command;
+                return (
+                  <TouchableOpacity
+                    key={action.id}
+                    onPress={() => sendAction(action)}
+                    activeOpacity={0.85}
+                    disabled={disabled}
+                    style={[
+                      styles.secondaryActionButton,
+                      {
+                        backgroundColor: active ? preset.iconActiveBackground : '#0f172a',
+                        opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
+                        height: CONTROL_HEIGHT,
+                      },
+                    ]}
+                  >
+                    {isPending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryActionText}>{action.label}</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+          ) : label === 'Boiler' ? (
+            <View style={styles.boilerControlsRow}>
+              <TouchableOpacity
+                onPress={() => {
+                  const down = actions.find(
+                    (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_down'
+                  );
+                  if (down) sendAction(down);
+                }}
+                activeOpacity={0.85}
+                disabled={hasPending}
+                style={[
+                  styles.boilerButton,
+                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                  hasPending && styles.primaryActionButtonDisabled,
+                ]}
+              >
+                {pendingCommand === 'boiler/temp_down' ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                    - Temp
+                  </Text>
+                )}
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => {
-                const up = actions.find(
-                  (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_up'
-                );
-                if (up) sendAction(up);
-              }}
-              activeOpacity={0.85}
-              disabled={hasPending}
-              style={[
-                styles.boilerButton,
-                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
-                hasPending && styles.primaryActionButtonDisabled,
-              ]}
-            >
-              {pendingCommand === 'boiler/temp_up' ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.primaryActionText}>+ Temp</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        ) : (
-          primaryAction && (
-            <TouchableOpacity
-              onPress={() => sendAction(primaryAction)}
-              activeOpacity={0.85}
-              disabled={hasPending}
-              style={[
-                styles.primaryActionButton,
-                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
-                hasPending && styles.primaryActionButtonDisabled,
-              ]}
-            >
-              {hasPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <View style={styles.primaryActionContent}>
-                  <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
-                  <Text style={styles.primaryActionText}>{primaryActionLabel(primaryAction, device)}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )
-        )}
+              <View style={[styles.boilerTarget, { height: CONTROL_HEIGHT }]}>
+                <Text style={styles.boilerTargetValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  {typeof attrs.temperature === 'number'
+                    ? `${Math.round(attrs.temperature)}°`
+                    : typeof (attrs as any).target_temp === 'number'
+                    ? `${Math.round((attrs as any).target_temp)}°`
+                    : '—'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => {
+                  const up = actions.find(
+                    (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_up'
+                  );
+                    if (up) sendAction(up);
+                }}
+                activeOpacity={0.85}
+                disabled={hasPending}
+                style={[
+                  styles.boilerButton,
+                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                  hasPending && styles.primaryActionButtonDisabled,
+                ]}
+              >
+                {pendingCommand === 'boiler/temp_up' ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                    + Temp
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            primaryAction && (
+              <TouchableOpacity
+                onPress={() => sendAction(primaryAction)}
+                activeOpacity={0.85}
+                disabled={hasPending}
+                style={[
+                  styles.primaryActionButton,
+                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                  hasPending && styles.primaryActionButtonDisabled,
+                ]}
+              >
+                {hasPending ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <View style={styles.primaryActionContent}>
+                    <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
+                    <Text
+                      style={styles.primaryActionText}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >
+                      {primaryActionLabel(primaryAction, device)}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )
+          )}
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -424,48 +444,40 @@ function rgbToHex(r: number, g: number, b: number): string {
 
 const styles = StyleSheet.create({
   card: {
+    flex: 1,
     borderRadius: radii.lg,
     padding: spacing.md,
-    marginBottom: spacing.sm,
     borderWidth: 1,
     borderColor: palette.outline,
     backgroundColor: palette.surface,
     ...shadows.soft,
   },
-  topRow: {
+  headerRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: 11,
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-    fontWeight: '700',
-    color: palette.textMuted,
+    alignItems: 'flex-start',
+    columnGap: spacing.xs,
   },
   batteryPill: {
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radii.pill,
     maxWidth: '100%',
+    flexShrink: 0,
   },
   batteryText: { fontSize: 11, fontWeight: '700' },
   icon: { fontSize: 18, color: '#fff' },
-  body: { marginTop: spacing.sm },
+  body: { marginTop: spacing.sm, flex: 1 },
+  content: { gap: 0 },
+  footer: { marginTop: 'auto', paddingTop: spacing.xs },
   name: { fontSize: 15, fontWeight: '700', color: palette.text },
-  secondary: { fontSize: 12, color: palette.textMuted, marginTop: 6 },
+  secondary: { fontSize: 12, color: palette.textMuted, marginTop: spacing.xs },
   boilerControlsRow: {
-    marginTop: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     columnGap: spacing.sm,
   },
   boilerButton: {
     flex: 1,
-    paddingVertical: spacing.md,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
@@ -473,7 +485,6 @@ const styles = StyleSheet.create({
   },
   boilerTarget: {
     minWidth: 86,
-    paddingVertical: spacing.md,
     paddingHorizontal: spacing.sm,
     borderRadius: radii.pill,
     backgroundColor: palette.surface,
@@ -482,21 +493,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  boilerTargetLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: palette.textMuted,
-    marginBottom: 2,
-  },
   boilerTargetValue: {
     fontSize: 16,
     fontWeight: '800',
     color: palette.text,
   },
   primaryActionButton: {
-    marginTop: spacing.md,
     width: '100%',
-    paddingVertical: spacing.md,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
@@ -505,51 +508,14 @@ const styles = StyleSheet.create({
   primaryActionButtonDisabled: {
     opacity: 0.6,
   },
-  boilerControlsRow: {
-    marginTop: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    columnGap: spacing.sm,
-  },
-  boilerButton: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.soft,
-  },
-  boilerTarget: {
-    minWidth: 86,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.pill,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.outline,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  boilerTargetLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: palette.textMuted,
-    marginBottom: 2,
-  },
-  boilerTargetValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: palette.text,
-  },
   blindActionsRow: {
-    marginTop: spacing.md,
     flexDirection: 'row',
     justifyContent: 'space-between',
     columnGap: spacing.sm,
   },
   secondaryActionButton: {
     flex: 1,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',

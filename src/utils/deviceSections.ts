@@ -89,7 +89,7 @@ function flattenSectionDevices(section: DeviceSection): UIDevice[] {
   return items;
 }
 
-export function buildSectionLayoutRows(sections: DeviceSection[]): LayoutRow[] {
+export function buildSectionLayoutRows(sections: DeviceSection[], maxColumns = 4): LayoutRow[] {
   const rows: LayoutRow[] = [];
   let currentSections: LayoutSection[] = [];
   let usedColumns = 0;
@@ -103,9 +103,9 @@ export function buildSectionLayoutRows(sections: DeviceSection[]): LayoutRow[] {
 
   for (const section of sections) {
     const devices = flattenSectionDevices(section);
-    const span = getSectionSpanForDevices(devices);
+    const span = getSectionSpanForDevices(devices, maxColumns);
 
-    if (usedColumns + span > 4 && currentSections.length > 0) {
+    if (usedColumns + span > maxColumns && currentSections.length > 0) {
       pushRow();
     }
 
@@ -117,7 +117,7 @@ export function buildSectionLayoutRows(sections: DeviceSection[]): LayoutRow[] {
     });
     usedColumns += span;
 
-    if (usedColumns === 4) {
+    if (usedColumns === maxColumns) {
       pushRow();
     }
   }
@@ -127,7 +127,7 @@ export function buildSectionLayoutRows(sections: DeviceSection[]): LayoutRow[] {
   return rows;
 }
 
-function getSectionSpanForDevices(devices: UIDevice[]): number {
+function getSectionSpanForDevices(devices: UIDevice[], maxColumns: number): number {
   if (devices.length === 0) return 1;
   let totalWidth = 0;
   let maxWidth = 1;
@@ -137,6 +137,6 @@ function getSectionSpanForDevices(devices: UIDevice[]): number {
     totalWidth += width;
     maxWidth = Math.max(maxWidth, width);
   }
-  const normalizedTotal = Math.min(4, totalWidth);
-  return Math.min(4, Math.max(maxWidth, normalizedTotal));
+  const normalizedTotal = Math.min(maxColumns, totalWidth);
+  return Math.min(maxColumns, Math.max(maxWidth, normalizedTotal));
 }

@@ -10,6 +10,7 @@ import {
   Modal,
   Pressable,
   SafeAreaView,
+  useWindowDimensions,
   type DimensionValue,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -48,7 +49,10 @@ const { InlineWifiSetupLauncher } = NativeModules as {
   InlineWifiSetupLauncher?: { open?: () => void };
 };
 
-const CARD_BASE_ROW_HEIGHT = 130;
+const GRID_MIN_COLUMNS = 2;
+const GRID_MAX_COLUMNS = 4;
+const GRID_MIN_CARD_WIDTH = 180;
+const GRID_GAP = spacing.sm;
 const ALL_AREAS = 'ALL';
 const ALL_AREAS_LABEL = 'All Areas';
 const HUB_CONFIGURE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -94,6 +98,16 @@ function DashboardContent({
   const [hubConfiguringError, setHubConfiguringError] = useState<string | null>(null);
   const [hasEverFetchedSecrets, setHasEverFetchedSecrets] = useState(false);
   const [hubConfigStartMs, setHubConfigStartMs] = useState<number | null>(null);
+  const { width: windowWidth } = useWindowDimensions();
+
+  const gridColumns = useMemo(() => {
+    const usableWidth = Math.max(
+      GRID_MIN_CARD_WIDTH * GRID_MIN_COLUMNS,
+      Math.min(maxContentWidth, windowWidth - spacing.md * 2)
+    );
+    const columns = Math.floor((usableWidth + GRID_GAP) / (GRID_MIN_CARD_WIDTH + GRID_GAP));
+    return Math.max(GRID_MIN_COLUMNS, Math.min(GRID_MAX_COLUMNS, columns));
+  }, [windowWidth]);
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -242,7 +256,16 @@ function DashboardContent({
   }, [areaOptions, selectedArea]);
 
   const sections = useMemo(() => buildDeviceSections(visibleDevices), [visibleDevices]);
-  const rows = useMemo(() => buildSectionLayoutRows(sections), [sections]);
+  const rows = useMemo(() => buildSectionLayoutRows(sections, gridColumns), [gridColumns, sections]);
+  const baseCardHeight = useMemo(() => {
+    const usableWidth = Math.max(
+      GRID_MIN_CARD_WIDTH * GRID_MIN_COLUMNS,
+      Math.min(maxContentWidth, windowWidth - spacing.md * 2)
+    );
+    const columnWidth = (usableWidth - GRID_GAP * (gridColumns - 1)) / gridColumns;
+    const target = Math.round(columnWidth * 0.78);
+    return Math.max(140, Math.min(170, target));
+  }, [gridColumns, windowWidth]);
 
   const linkedSensors = useMemo(
     () =>
@@ -309,7 +332,7 @@ function DashboardContent({
     ({ item }: { item: LayoutRow }) => (
       <View style={styles.deviceRow}>
         {item.sections.map((section) => {
-          const sectionWidth: DimensionValue = `${section.span * 25}%`;
+          const sectionWidth: DimensionValue = `${(section.span / gridColumns) * 100}%`;
           return (
             <View key={section.key} style={[styles.sectionContainer, { width: sectionWidth }]}>
               <View style={styles.sectionHeader}>
@@ -324,11 +347,11 @@ function DashboardContent({
                   const { width: widthUnits, height: heightUnits } = getDeviceDimensions(size);
                   const widthPercent: DimensionValue =
                     `${Math.min(100, (widthUnits / section.span) * 100)}%`;
-                  const minHeight = CARD_BASE_ROW_HEIGHT * heightUnits;
+                  const minHeight = baseCardHeight * heightUnits;
                   return (
                     <View
                       key={device.entityId}
-                      style={[styles.cardWrapper, { width: widthPercent, minHeight }]}
+                      style={[styles.cardWrapper, { width: widthPercent, height: minHeight }]}
                     >
                       <DeviceCard
                         device={device}
@@ -346,7 +369,7 @@ function DashboardContent({
                   <View
                     style={[
                       styles.cardWrapper,
-                      { width: section.span > 1 ? '50%' : '100%', minHeight: CARD_BASE_ROW_HEIGHT },
+                      { width: section.span > 1 ? '50%' : '100%', height: baseCardHeight },
                     ]}
                   >
                     <RingDoorbellCard />
@@ -358,7 +381,7 @@ function DashboardContent({
         })}
       </View>
     ),
-    [devices.length, handleBackgroundRefresh, handleOpenDetails, isAdmin, refreshing]
+    [batteryByGroup, baseCardHeight, devices.length, gridColumns, handleBackgroundRefresh, handleOpenDetails, isAdmin, refreshing]
   );
 
   const isColdStart = !lastUpdated && devices.length === 0 && !error;
@@ -630,7 +653,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: spacing.sm,
     paddingBottom: spacing.xxl + 140,
-    gap: spacing.md,
+    gap: spacing.sm,
     alignItems: 'center',
   },
   errorBanner: {
@@ -644,11 +667,11 @@ const styles = StyleSheet.create({
   refreshing: { fontSize: 12, color: '#9ca3af' },
   deviceRow: {
     flexDirection: 'row',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     width: '100%',
     maxWidth: maxContentWidth,
   },
-  sectionContainer: { paddingHorizontal: 6 },
+  sectionContainer: { paddingHorizontal: spacing.xs },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -657,13 +680,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     backgroundColor: palette.surfaceMuted,
     borderRadius: radii.md,
-    marginBottom: 10,
+    marginBottom: spacing.sm,
     borderWidth: 1,
     borderColor: palette.outline,
   },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: palette.textMuted, letterSpacing: 0.2 },
   sectionCards: { flexDirection: 'row', flexWrap: 'wrap' },
-  cardWrapper: { paddingHorizontal: 6, paddingVertical: 8, flexShrink: 0 },
+  cardWrapper: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+    flexShrink: 0,
+    alignSelf: 'stretch',
+  },
   emptyState: {
     paddingVertical: 40,
     alignItems: 'center',
