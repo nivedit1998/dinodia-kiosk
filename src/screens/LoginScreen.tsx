@@ -25,6 +25,9 @@ import { getDeviceIdentity } from '../utils/deviceIdentity';
 import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { BrandHeader } from '../components/ui/BrandHeader';
+import { InlineNotice } from '../components/ui/InlineNotice';
+import { LoadingOverlay } from '../components/ui/LoadingOverlay';
 
 const { InlineWifiSetupLauncher } = NativeModules;
 
@@ -245,13 +248,12 @@ export function LoginScreen() {
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.content}>
+          <BrandHeader subtitle="Smart living. Quietly confident." />
           <View style={styles.hero}>
             <View style={styles.pill}>
               <View style={styles.pillDot} />
               <Text style={styles.pillText}>Kiosk ready</Text>
             </View>
-            <Text style={styles.brand}>Dinodia</Text>
-            <Text style={styles.subtitle}>Smart Living. Quietly confident.</Text>
           </View>
 
           <View style={styles.card}>
@@ -275,9 +277,7 @@ export function LoginScreen() {
                   <Text style={styles.statusText}>{verificationStatusLabel()}</Text>
                 </View>
 
-                {verificationError ? (
-                  <Text style={styles.errorText}>{verificationError}</Text>
-                ) : null}
+                <InlineNotice message={verificationError} type="error" />
 
                 <PrimaryButton
                   title="Resend email"
@@ -330,7 +330,8 @@ export function LoginScreen() {
                 ) : null}
 
                 <PrimaryButton
-                  title={loading ? 'Logging in…' : 'Login'}
+                  title="Login"
+                  loading={loading}
                   onPress={() => {
                     void handleLogin();
                   }}
@@ -383,6 +384,11 @@ export function LoginScreen() {
           </View>
         </View>
       </ScrollView>
+      <LoadingOverlay
+        visible={loading || verifying}
+        label={loading ? 'Signing in…' : 'Finishing verification…'}
+        blocking={loading}
+      />
     </SafeAreaView>
   );
 }
@@ -444,8 +450,6 @@ const styles = StyleSheet.create({
     marginRight: spacing.xs,
   },
   pillText: { color: palette.textMuted, fontWeight: '700' },
-  brand: { fontSize: 34, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,

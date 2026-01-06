@@ -20,7 +20,7 @@ export function RootNavigator() {
 
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'fade' }}>
         {loading ? (
           <Stack.Screen name="Splash" component={SplashScreen} />
         ) : session.user ? (

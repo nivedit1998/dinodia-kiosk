@@ -29,7 +29,7 @@ export async function assignHaAreaToDevices(
       return normalize(name) === normalize(normalizedArea);
     });
     if (!match?.area_id) {
-      return { ok: false, warning: 'Area not found in Home Assistant.' };
+      return { ok: false, warning: 'Area not found in Dinodia Hub.' };
     }
 
     await Promise.all(

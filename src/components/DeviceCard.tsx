@@ -184,6 +184,63 @@ export const DeviceCard = memo(function DeviceCard({
               );
             })}
           </View>
+        ) : label === 'Boiler' ? (
+          <View style={styles.boilerControlsRow}>
+            <TouchableOpacity
+              onPress={() => {
+                const down = actions.find(
+                  (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_down'
+                );
+                if (down) sendAction(down);
+              }}
+              activeOpacity={0.85}
+              disabled={hasPending}
+              style={[
+                styles.boilerButton,
+                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
+                hasPending && styles.primaryActionButtonDisabled,
+              ]}
+            >
+              {pendingCommand === 'boiler/temp_down' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>- Temp</Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.boilerTarget}>
+              <Text style={styles.boilerTargetLabel}>Target</Text>
+              <Text style={styles.boilerTargetValue}>
+                {typeof attrs.temperature === 'number'
+                  ? `${Math.round(attrs.temperature)}°`
+                  : typeof (attrs as any).target_temp === 'number'
+                  ? `${Math.round((attrs as any).target_temp)}°`
+                  : '—'}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => {
+                const up = actions.find(
+                  (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_up'
+                );
+                if (up) sendAction(up);
+              }}
+              activeOpacity={0.85}
+              disabled={hasPending}
+              style={[
+                styles.boilerButton,
+                { backgroundColor: active ? preset.iconActiveBackground : '#0f172a' },
+                hasPending && styles.primaryActionButtonDisabled,
+              ]}
+            >
+              {pendingCommand === 'boiler/temp_up' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>+ Temp</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         ) : (
           primaryAction && (
             <TouchableOpacity
@@ -400,6 +457,42 @@ const styles = StyleSheet.create({
   body: { marginTop: spacing.sm },
   name: { fontSize: 15, fontWeight: '700', color: palette.text },
   secondary: { fontSize: 12, color: palette.textMuted, marginTop: 6 },
+  boilerControlsRow: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    columnGap: spacing.sm,
+  },
+  boilerButton: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  boilerTarget: {
+    minWidth: 86,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.pill,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boilerTargetLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.textMuted,
+    marginBottom: 2,
+  },
+  boilerTargetValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
+  },
   primaryActionButton: {
     marginTop: spacing.md,
     width: '100%',
@@ -411,6 +504,42 @@ const styles = StyleSheet.create({
   },
   primaryActionButtonDisabled: {
     opacity: 0.6,
+  },
+  boilerControlsRow: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    columnGap: spacing.sm,
+  },
+  boilerButton: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  boilerTarget: {
+    minWidth: 86,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.pill,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.outline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boilerTargetLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.textMuted,
+    marginBottom: 2,
+  },
+  boilerTargetValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
   },
   blindActionsRow: {
     marginTop: spacing.md,

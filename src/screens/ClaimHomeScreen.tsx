@@ -17,6 +17,10 @@ import { getDeviceIdentity } from '../utils/deviceIdentity';
 import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { BrandHeader } from '../components/ui/BrandHeader';
+import { InlineNotice } from '../components/ui/InlineNotice';
+import { LoadingOverlay } from '../components/ui/LoadingOverlay';
+import { friendlyError } from '../ui/friendlyError';
 
 type ClaimValidateResponse = { ok?: boolean; homeStatus?: string; error?: string };
 type ClaimStartResponse = {
@@ -176,7 +180,7 @@ export function ClaimHomeScreen() {
       setClaimContext({ homeStatus: data.homeStatus });
       setStep(2);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'We could not validate that claim code.');
+      setError(friendlyError(err, 'claim'));
     } finally {
       setCheckingCode(false);
     }
@@ -196,7 +200,7 @@ export function ClaimHomeScreen() {
       return;
     }
     if (!form.email.trim()) {
-      setError('Enter an email address to verify your admin account.');
+      setError('Enter an email address to verify your homeowner account.');
       return;
     }
     if (form.email.trim() !== form.confirmEmail.trim()) {
@@ -229,7 +233,7 @@ export function ClaimHomeScreen() {
       setChallengeStatus('PENDING');
       setInfo('Check your email to verify and finish setup.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'We could not start the claim.');
+      setError(friendlyError(err, 'claim'));
     } finally {
       setLoading(false);
     }
@@ -254,22 +258,21 @@ export function ClaimHomeScreen() {
 
       <ScrollView contentContainerStyle={styles.pageContent}>
         <View style={styles.content}>
+          <BrandHeader subtitle="Claim this home" />
           <View style={styles.hero}>
             <View style={styles.pill}>
               <View style={styles.pillDot} />
               <Text style={styles.pillText}>Ownership transfer</Text>
             </View>
-            <Text style={styles.brand}>Dinodia</Text>
-            <Text style={styles.subtitle}>Claim this home</Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardSub}>
-              Use the claim code from the previous homeowner to create your admin account.
+              Use the claim code from the previous homeowner to create your homeowner account.
             </Text>
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            {info ? <Text style={styles.infoText}>{info}</Text> : null}
+            <InlineNotice message={error} type="error" />
+            <InlineNotice message={info} type="info" />
 
             {!awaitingVerification && step === 1 ? (
               <View style={styles.form}>
@@ -334,7 +337,7 @@ export function ClaimHomeScreen() {
                   </View>
                   <View style={styles.fieldWrap}>
                     <TextField
-                      label="Admin email"
+                      label="Homeowner email"
                       placeholder="you@example.com"
                       autoCapitalize="none"
                       keyboardType="email-address"
@@ -395,7 +398,7 @@ export function ClaimHomeScreen() {
             {awaitingVerification ? (
               <View style={styles.form}>
                 <Text style={styles.cardSub}>
-                  Check your email and click the verification link. We’ll finish creating your admin
+                  Check your email and click the verification link. We’ll finish creating your homeowner
                   session on this device after approval.
                 </Text>
                 <View style={styles.statusRow}>
@@ -425,6 +428,19 @@ export function ClaimHomeScreen() {
           </View>
         </View>
       </ScrollView>
+      <LoadingOverlay
+        visible={loading || verifying || checkingCode}
+        label={
+          loading
+            ? 'Starting claim…'
+            : verifying
+            ? 'Waiting for verification…'
+            : checkingCode
+            ? 'Checking claim code…'
+            : undefined
+        }
+        blocking={loading || verifying}
+      />
     </SafeAreaView>
   );
 }
@@ -478,8 +494,6 @@ const styles = StyleSheet.create({
     marginRight: spacing.xs,
   },
   pillText: { color: palette.textMuted, fontWeight: '700' },
-  brand: { fontSize: 32, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,

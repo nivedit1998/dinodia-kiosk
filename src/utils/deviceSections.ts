@@ -30,7 +30,7 @@ export type DeviceDimension = { width: number; height: number };
 
 export function getDeviceLayoutSize(device: UIDevice): DeviceLayoutSize {
   const label = getPrimaryLabel(device);
-  if (label === 'Spotify') return 'medium';
+  if (label === 'Spotify' || label === 'Boiler') return 'medium';
   return 'small';
 }
 

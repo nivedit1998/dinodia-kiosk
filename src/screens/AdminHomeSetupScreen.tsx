@@ -34,6 +34,7 @@ import { useCloudModeSwitch } from '../hooks/useCloudModeSwitch';
 import { callHaService, listHaStates, probeHaReachability, type HaConnectionLike } from '../api/ha';
 import { haWsCall } from '../api/haWebSocket';
 import { fetchHomeModeSecrets, type HomeModeSecrets } from '../api/haSecrets';
+import { friendlyError } from '../ui/friendlyError';
 
 type SellingMode = 'FULL_RESET' | 'OWNER_TRANSFER';
 type TenantInfo = TenantRecord;
@@ -196,7 +197,7 @@ export function AdminHomeSetupScreen() {
         return next;
       });
     } catch (err) {
-      setTenantsError(err instanceof Error ? err.message : 'Failed to load tenants.');
+      setTenantsError(friendlyError(err, 'settings'));
     } finally {
       setTenantsLoading(false);
     }
@@ -217,7 +218,7 @@ export function AdminHomeSetupScreen() {
     } catch (err) {
       updateTenantActionState(tenant.id, {
         saving: false,
-        error: err instanceof Error ? err.message : 'Failed to update areas.',
+        error: friendlyError(err, 'settings'),
       });
       return;
     }
@@ -236,7 +237,7 @@ export function AdminHomeSetupScreen() {
     } catch (err) {
       updateTenantActionState(tenant.id, {
         saving: false,
-        error: err instanceof Error ? err.message : 'Failed to update areas.',
+        error: friendlyError(err, 'settings'),
       });
       return;
     }
@@ -260,7 +261,7 @@ export function AdminHomeSetupScreen() {
             } catch (err) {
               updateTenantActionState(tenant.id, {
                 saving: false,
-                error: err instanceof Error ? err.message : 'Failed to delete tenant.',
+                error: friendlyError(err, 'settings'),
               });
               return;
             }
@@ -296,7 +297,7 @@ export function AdminHomeSetupScreen() {
         await refreshTenants();
       }
     } catch (err) {
-      setTenantMsg(err instanceof Error ? err.message : 'We could not add that tenant right now.');
+      setTenantMsg(friendlyError(err, 'settings'));
     } finally {
       setTenantLoading(false);
     }
@@ -326,7 +327,7 @@ export function AdminHomeSetupScreen() {
         throw new Error('We could not retrieve the claim code. Please try again.');
       }
     } catch (err) {
-      setSellingError(err instanceof Error ? err.message : 'We could not process this request.');
+      setSellingError(friendlyError(err, 'settings'));
     } finally {
       setSellingLoading(false);
       setCleanupStep(null);
@@ -454,7 +455,7 @@ export function AdminHomeSetupScreen() {
       />
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.header}>Home setup</Text>
-        <Text style={styles.subheader}>Admin only</Text>
+        <Text style={styles.subheader}>Homeowner only</Text>
 
         <View style={styles.section}>
           <TouchableOpacity
@@ -468,13 +469,13 @@ export function AdminHomeSetupScreen() {
               }
             }}
           >
-            <Text style={styles.sectionTitle}>Home setup - view tenants</Text>
+            <Text style={styles.sectionTitle}>Home setup - view users</Text>
             <Text style={styles.collapseToggle}>{viewTenantsOpen ? 'Hide' : 'Show'}</Text>
           </TouchableOpacity>
           {tenantLocked ? (
             <Text style={styles.lockBanner}>
               {remoteAccess.message ??
-                'Remote access must be enabled before managing tenants from this device.'}
+                'Remote access must be enabled before managing users from this device.'}
             </Text>
           ) : null}
           {viewTenantsOpen ? (
@@ -487,7 +488,7 @@ export function AdminHomeSetupScreen() {
             >
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.helperText}>
-                  View tenants in this home and update their areas.
+                  View users in this home and update their areas.
                 </Text>
                 <TouchableOpacity
                   onPress={() => void refreshTenants()}
@@ -501,9 +502,9 @@ export function AdminHomeSetupScreen() {
               </View>
               {tenantsError ? <Text style={styles.errorText}>{tenantsError}</Text> : null}
               {tenantsLoading ? (
-                <Text style={styles.helperText}>Loading tenants…</Text>
+                <Text style={styles.helperText}>Loading users…</Text>
               ) : tenants.length === 0 ? (
-                <Text style={styles.helperText}>No tenants yet.</Text>
+                <Text style={styles.helperText}>No users yet.</Text>
               ) : (
                 <View style={styles.tenantList}>
                   {tenants.map((tenant) => {
@@ -594,13 +595,13 @@ export function AdminHomeSetupScreen() {
             activeOpacity={0.85}
             onPress={() => setAddTenantOpen((prev) => !prev)}
           >
-            <Text style={styles.sectionTitle}>Home setup - add tenant</Text>
+            <Text style={styles.sectionTitle}>Home setup - add user</Text>
             <Text style={styles.collapseToggle}>{addTenantOpen ? 'Hide' : 'Show'}</Text>
           </TouchableOpacity>
           {tenantLocked ? (
             <Text style={styles.lockBanner}>
               {remoteAccess.message ??
-                'Remote access must be enabled before adding tenants from this device.'}
+                'Remote access must be enabled before adding users from this device.'}
             </Text>
           ) : null}
           {addTenantOpen ? (
@@ -612,7 +613,7 @@ export function AdminHomeSetupScreen() {
               pointerEvents={tenantLocked ? 'none' : 'auto'}
             >
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.helperText}>Create a new tenant and assign their rooms.</Text>
+                <Text style={styles.helperText}>Create a new user and assign their rooms.</Text>
                 <TouchableOpacity
                   onPress={() => void refreshDevices()}
                   disabled={refreshing}
@@ -627,15 +628,15 @@ export function AdminHomeSetupScreen() {
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
               <TextField
-                label="Tenant username"
-                placeholder="tenant@example.com"
+                label="User username"
+                placeholder="user@example.com"
                 autoCapitalize="none"
                 value={tenantUsername}
                 onChangeText={setTenantUsername}
                 keyboardType="email-address"
               />
               <TextField
-                label="Tenant password"
+                label="User password"
                 placeholder="********"
                 secureTextEntry
                 secureToggle
@@ -678,7 +679,7 @@ export function AdminHomeSetupScreen() {
               ) : null}
 
               <PrimaryButton
-                title={tenantLoading ? 'Adding...' : 'Add tenant'}
+                title={tenantLoading ? 'Adding...' : 'Add user'}
                 onPress={() => void handleCreateTenant()}
                 disabled={tenantLoading}
                 style={[styles.compactButton, { marginTop: spacing.sm }]}
@@ -718,7 +719,7 @@ export function AdminHomeSetupScreen() {
                 disabled={sellingLoading}
               >
                 <Text style={styles.optionTitle}>
-                  Deregister your whole household (Homeowner + Occupiers)
+                  Deregister your whole household (Homeowner + Users)
                 </Text>
                 <Text style={styles.optionText}>
                   Fully reset this home so the next owner starts fresh.
@@ -740,7 +741,7 @@ export function AdminHomeSetupScreen() {
                   Deregister yourself but keep all occupiers control active
                 </Text>
                 <Text style={styles.optionText}>
-                  Remove your ownership while keeping tenant devices and automations.
+                  Remove your ownership while keeping user devices and automations.
                 </Text>
               </TouchableOpacity>
 
@@ -751,8 +752,8 @@ export function AdminHomeSetupScreen() {
                   </Text>
                   <Text style={styles.confirmText}>
                     {sellingMode === 'FULL_RESET'
-                      ? 'This will remove all tenant devices, automations, alexa links and accounts and fully reset your Dinodia home.'
-                      : 'This will remove your property but keep all tenants, devices, automations, and integrations.'}
+                      ? 'This will remove all user devices, automations, alexa links and accounts and fully reset your Dinodia home.'
+                      : 'This will remove your property but keep all users, devices, automations, and integrations.'}
                   </Text>
                   {cleanupStep ? <Text style={styles.helperText}>{cleanupStep}</Text> : null}
                   <View style={styles.confirmActions}>

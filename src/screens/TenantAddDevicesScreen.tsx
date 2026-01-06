@@ -94,10 +94,10 @@ function buildStatusMessage(session: MatterSession | null) {
   if (session.status === 'FAILED') return session.error || 'Commissioning failed';
   if (session.status === 'CANCELED') return 'Commissioning was canceled';
   const lastStep = session.lastHaStep;
-  if (lastStep?.progress_action === 'wait') return 'Home Assistant is configuring the device...';
+  if (lastStep?.progress_action === 'wait') return 'Dinodia Hub is configuring the device...';
   if (lastStep?.type === 'progress') return 'Commissioning in progress...';
   if (lastStep?.type === 'form') return 'Waiting for pairing details...';
-  return 'Contacting Home Assistant...';
+  return 'Contacting Dinodia Hub...';
 }
 
 type SimpleButtonVariant = 'default' | 'primary' | 'danger';
@@ -246,7 +246,7 @@ export function TenantAddDevicesScreen() {
       } catch (err) {
         if (!active) return;
         setLabelsError(
-          err instanceof Error ? err.message : 'Home Assistant labels are unavailable right now.'
+          err instanceof Error ? err.message : 'Dinodia Hub labels are unavailable right now.'
         );
       } finally {
         if (active) setLabelsLoading(false);
@@ -280,7 +280,7 @@ export function TenantAddDevicesScreen() {
         wifiPassword,
       });
       if (!userInput || Object.keys(userInput).length === 0) {
-        setError('Home Assistant needs more information to continue this step.');
+        setError('Dinodia Hub needs more information to continue this step.');
         setCurrentStep(3);
         return step;
       }
@@ -311,7 +311,7 @@ export function TenantAddDevicesScreen() {
             nextStatus === 'FAILED'
               ? step.errors
                 ? Object.values(step.errors).filter(Boolean).join(', ')
-                : 'Home Assistant aborted the commissioning flow.'
+                : 'Dinodia Hub aborted the commissioning flow.'
               : null,
           lastHaStep: step,
           newDeviceIds: sessionState?.newDeviceIds ?? [],
@@ -363,7 +363,7 @@ export function TenantAddDevicesScreen() {
 
       const diff = diffRegistrySnapshots(beforeSnapshotRef.current, afterSnapshot);
       if (diff.newEntityIds.length === 0) {
-        warningsList.push('No new entities were detected yet. Check Home Assistant if devices appear.');
+        warningsList.push('No new entities were detected yet. Check Dinodia Hub if devices appear.');
       }
 
       try {
@@ -481,7 +481,7 @@ export function TenantAddDevicesScreen() {
           stepStatus === 'FAILED'
             ? step.errors
               ? Object.values(step.errors).filter(Boolean).join(', ')
-              : 'Home Assistant aborted the commissioning flow.'
+              : 'Dinodia Hub aborted the commissioning flow.'
             : null,
       };
       setWifiPassword('');
@@ -689,7 +689,7 @@ export function TenantAddDevicesScreen() {
               </Text>
             </View>
             <View style={styles.selectBlock}>
-              <Text style={styles.label}>Home Assistant label</Text>
+              <Text style={styles.label}>Dinodia Hub label</Text>
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => {
@@ -714,7 +714,7 @@ export function TenantAddDevicesScreen() {
           <View style={styles.stepSection}>
             <Text style={styles.bodyText}>
               Enter the Wi-Fi credentials for the network your Matter device should join. We only send
-              these to Home Assistant when it requests them during commissioning and do not store them.
+              these to Dinodia Hub when it requests them during commissioning and do not store them.
             </Text>
             <TextField
               label="Wi-Fi name (SSID)"
@@ -738,7 +738,7 @@ export function TenantAddDevicesScreen() {
         return (
           <View style={styles.stepSection}>
             <Text style={styles.bodyText}>
-              We are sending the pairing request to Home Assistant. Keep this page open until it finishes.
+              We are sending the pairing request to Dinodia Hub. Keep this page open until it finishes.
             </Text>
             <View style={styles.statusCard}>
               <Text style={styles.statusText}>{statusMessage}</Text>

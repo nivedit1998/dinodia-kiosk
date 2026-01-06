@@ -21,6 +21,8 @@ import { useSession } from '../store/sessionStore';
 import { clearAllDeviceCacheForUser } from '../store/deviceStore';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { BrandHeader } from '../components/ui/BrandHeader';
+import { LoadingOverlay } from '../components/ui/LoadingOverlay';
 import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { AuthStackParamList } from '../navigation/AuthNavigator';
 
@@ -166,6 +168,7 @@ export function TenantEmailSetupScreen({ route, navigation }: Props) {
         <View style={[styles.glow, styles.glowBottom]} />
       </View>
       <View style={styles.content}>
+        <BrandHeader subtitle="Secure this kiosk" />
         <View style={styles.card}>
           <Text style={styles.title}>Verify your email</Text>
           <Text style={styles.subtitle}>
@@ -235,6 +238,11 @@ export function TenantEmailSetupScreen({ route, navigation }: Props) {
           )}
         </View>
       </View>
+      <LoadingOverlay
+        visible={loading || verifying}
+        label={loading ? 'Sending verification…' : 'Checking verification…'}
+        blocking={loading}
+      />
     </SafeAreaView>
   );
 }

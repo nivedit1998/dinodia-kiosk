@@ -25,6 +25,8 @@ import { getDeviceIdentity } from '../utils/deviceIdentity';
 import { fetchKioskContext } from '../api/dinodia';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import CookieManager from '@react-native-cookies/cookies';
+import { friendlyError } from '../ui/friendlyError';
+import { InlineNotice } from '../components/ui/InlineNotice';
 
 const LOG_TAG = '[RemoteAccessSetup]';
 
@@ -289,7 +291,7 @@ export function RemoteAccessSetupScreen() {
       setStatus('waiting');
     } catch (err) {
       setStatus('idle');
-      setChallengeError(err instanceof Error ? err.message : 'Unable to start verification.');
+      setChallengeError(friendlyError(err, 'remoteAccess'));
     }
   }, [user]);
 
@@ -318,7 +320,7 @@ export function RemoteAccessSetupScreen() {
     } catch (err) {
       clearSensitive();
       setStatus('idle');
-      setChallengeError(err instanceof Error ? err.message : 'Verification required.');
+      setChallengeError(friendlyError(err, 'remoteAccess'));
     }
   }, [clearSensitive, user]);
 
@@ -480,7 +482,7 @@ export function RemoteAccessSetupScreen() {
       } catch (err) {
         saveInFlightRef.current = false;
         setStatus('ready');
-        Alert.alert('Error', err instanceof Error ? err.message : 'We could not save remote access.');
+        Alert.alert('Error', friendlyError(err, 'remoteAccess'));
       }
     },
     [clearSensitive, leaseToken, setSession, user]
@@ -758,7 +760,7 @@ export function RemoteAccessSetupScreen() {
 
           <View style={styles.instructions}>
             <Text style={styles.instructionsTitle}>How this works</Text>
-            <Text style={styles.instructionsItem}>1) Sign into Home Assistant.</Text>
+            <Text style={styles.instructionsItem}>1) Sign into Dinodia Hub.</Text>
             <Text style={styles.instructionsItem}>
               2) Go to Cloud account and tap the eye icon to unhide the link.
             </Text>
@@ -813,9 +815,9 @@ export function RemoteAccessSetupScreen() {
             <View style={styles.readyBlock}>
               <Text style={styles.readyTitle}>Verified</Text>
               <Text style={styles.readyText}>
-                Continue to Home Assistant to connect Nabu Casa. The link will be saved, but not displayed.
+                Continue to Dinodia Hub to connect Nabu Casa. The link will be saved, but not displayed.
               </Text>
-              <PrimaryButton title="Open Home Assistant" onPress={openWeb} />
+              <PrimaryButton title="Open Dinodia Hub" onPress={openWeb} />
               <TouchableOpacity
                 onPress={() => {
                   clearSensitive();
@@ -854,14 +856,14 @@ export function RemoteAccessSetupScreen() {
             </View>
           ) : null}
 
-          {challengeError ? <Text style={styles.errorText}>{challengeError}</Text> : null}
+          <InlineNotice message={challengeError} type="error" />
         </View>
       </ScrollView>
 
           <Modal visible={webVisible} animationType="slide" onRequestClose={closeWeb}>
             <SafeAreaView style={styles.webRoot}>
               <View style={styles.webHeader}>
-                <Text style={styles.webTitle}>Home Assistant</Text>
+                <Text style={styles.webTitle}>Dinodia Hub</Text>
                 <PrimaryButton title="Close" variant="ghost" onPress={closeWeb} />
               </View>
               {accountUrl && haCreds ? (

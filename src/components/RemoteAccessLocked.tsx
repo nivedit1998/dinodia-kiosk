@@ -14,7 +14,7 @@ export function RemoteAccessLocked({ title, message, onBackHome }: Props) {
   return (
     <View style={styles.wrap}>
       <View style={styles.card}>
-        <Text style={styles.title}>{title || 'Cloud mode locked'}</Text>
+        <Text style={styles.title}>{title || 'Remote access locked'}</Text>
         <Text style={styles.message}>{message}</Text>
         {onBackHome ? (
           <PrimaryButton title="Back to Home Mode" onPress={onBackHome} style={styles.button} />

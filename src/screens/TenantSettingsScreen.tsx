@@ -42,7 +42,7 @@ export function TenantSettingsScreen() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.header}>Tenant Settings</Text>
+        <Text style={styles.header}>User Settings</Text>
         <Text style={styles.subheader}>Logged in as {user.username}</Text>
 
         <View style={styles.section}>

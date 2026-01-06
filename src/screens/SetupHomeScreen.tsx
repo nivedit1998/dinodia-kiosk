@@ -18,6 +18,10 @@ import { getDeviceIdentity } from '../utils/deviceIdentity';
 import { maxContentWidth, palette, radii, shadows, spacing, typography } from '../ui/theme';
 import { TextField } from '../components/ui/TextField';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
+import { BrandHeader } from '../components/ui/BrandHeader';
+import { InlineNotice } from '../components/ui/InlineNotice';
+import { LoadingOverlay } from '../components/ui/LoadingOverlay';
+import { friendlyError } from '../ui/friendlyError';
 
 type HubDetails = {
   dinodiaSerial?: string;
@@ -195,7 +199,7 @@ export function SetupHomeScreen() {
       return;
     }
     if (!form.email.trim()) {
-      setError('Please enter an admin email.');
+      setError('Please enter a homeowner email.');
       return;
     }
     if (form.email.trim() !== form.confirmEmail.trim()) {
@@ -235,7 +239,7 @@ export function SetupHomeScreen() {
         bootstrapSecret: '',
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'We could not finish setup.');
+      setError(friendlyError(err, 'setup'));
     } finally {
       setLoading(false);
     }
@@ -295,18 +299,17 @@ export function SetupHomeScreen() {
 
       <ScrollView contentContainerStyle={styles.pageContent}>
         <View style={styles.content}>
+          <BrandHeader subtitle="Set up this home" />
           <View style={styles.hero}>
             <View style={styles.pill}>
               <View style={styles.pillDot} />
               <Text style={styles.pillText}>New home setup</Text>
             </View>
-            <Text style={styles.brand}>Dinodia</Text>
-            <Text style={styles.subtitle}>Set up this home</Text>
           </View>
 
           <View style={styles.card}>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            {info ? <Text style={styles.infoText}>{info}</Text> : null}
+            <InlineNotice message={error} type="error" />
+            <InlineNotice message={info} type="info" />
 
             {!awaitingVerification ? (
               <View style={styles.form}>
@@ -335,14 +338,14 @@ export function SetupHomeScreen() {
 
                 <View style={styles.row}>
                   <View style={styles.fieldWrap}>
-                    <TextField
-                      label="Admin email"
-                      placeholder="you@example.com"
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      value={form.email}
-                      onChangeText={(v) => updateField('email', v)}
-                    />
+          <TextField
+            label="Homeowner email"
+            placeholder="you@example.com"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={form.email}
+            onChangeText={(v) => updateField('email', v)}
+          />
                   </View>
                   <View style={styles.fieldWrap}>
                     <TextField
@@ -421,11 +424,16 @@ export function SetupHomeScreen() {
             )}
           </View>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>First-time setup for a new home</Text>
-          </View>
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>First-time setup for a new home</Text>
         </View>
-      </ScrollView>
+      </View>
+    </ScrollView>
+      <LoadingOverlay
+        visible={loading || verifying}
+        label={loading ? 'Creating homeowner account…' : 'Waiting for verification…'}
+        blocking={loading}
+      />
     </SafeAreaView>
   );
 }
@@ -479,8 +487,6 @@ const styles = StyleSheet.create({
     marginRight: spacing.xs,
   },
   pillText: { color: palette.textMuted, fontWeight: '700' },
-  brand: { fontSize: 32, fontWeight: '800', letterSpacing: 0.3, color: palette.text },
-  subtitle: { color: palette.textMuted, fontSize: 15 },
   card: {
     backgroundColor: palette.surface,
     borderRadius: radii.xl,

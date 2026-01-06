@@ -269,7 +269,7 @@ export function AutomationsListScreen({}: Props) {
                     item.description ||
                     item.basicSummary ||
                     detail.actionSummary ||
-                    'No summary from Home Assistant yet.';
+                    'No summary from Dinodia Hub yet.';
                   const trigger = detail.triggerSummary || item.triggerSummary || 'Trigger info not available.';
                   const action =
                     detail.actionSummary || item.actionSummary || 'Action info not available.';

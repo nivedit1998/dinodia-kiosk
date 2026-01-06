@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SegmentedTabs } from './SegmentedTabs';
 import { palette, radii, shadows, spacing, maxContentWidth } from '../../ui/theme';
 
@@ -49,6 +49,7 @@ export function TopBar({
     <View style={styles.wrap}>
       <View style={styles.inner}>
         <View style={styles.left}>
+          <Image source={require('../../../assets/branding/mark.png')} style={styles.brand} resizeMode="contain" />
           {areaLabel ? (
             <TouchableOpacity
               onPress={onPressArea}
@@ -59,7 +60,7 @@ export function TopBar({
                 {areaLabel}
               </Text>
               <Text style={styles.areaSub} numberOfLines={1} ellipsizeMode="tail">
-                Area - tap to change
+                Filter
               </Text>
             </TouchableOpacity>
           ) : (
@@ -124,6 +125,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '100%',
   },
+  brand: { width: 38, height: 38, marginRight: spacing.xs },
   inner: {
     flexDirection: 'row',
     alignItems: 'center',

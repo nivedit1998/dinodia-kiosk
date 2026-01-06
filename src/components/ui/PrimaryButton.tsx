@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
 import { palette, radii, shadows, spacing } from '../../ui/theme';
 
 type Props = {
@@ -7,10 +7,11 @@ type Props = {
   onPress: () => void;
   disabled?: boolean;
   variant?: 'primary' | 'ghost' | 'danger';
+  loading?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
-export function PrimaryButton({ title, onPress, disabled, variant = 'primary', style }: Props) {
+export function PrimaryButton({ title, onPress, disabled, variant = 'primary', loading, style }: Props) {
   const background =
     variant === 'primary'
       ? palette.primary
@@ -20,28 +21,33 @@ export function PrimaryButton({ title, onPress, disabled, variant = 'primary', s
   const borderColor = variant === 'ghost' ? palette.outline : 'transparent';
   const textColor = variant === 'ghost' ? palette.text : '#fff';
   const elevation = variant === 'ghost' ? null : shadows.soft;
+  const isDisabled = disabled || loading;
 
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.9}
-      disabled={disabled}
+      disabled={isDisabled}
       style={[
         styles.button,
         {
-          backgroundColor: disabled
+          backgroundColor: isDisabled
             ? variant === 'ghost'
               ? palette.surfaceMuted
               : '#cbd5e1'
             : background,
           borderColor,
-          opacity: disabled ? 0.9 : 1,
+          opacity: isDisabled ? 0.9 : 1,
         },
         elevation,
         style,
       ]}
     >
-      <Text style={[styles.title, { color: disabled ? '#94a3b8' : textColor }]}>{title}</Text>
+      {loading ? (
+        <ActivityIndicator size="small" color={textColor} />
+      ) : (
+        <Text style={[styles.title, { color: isDisabled ? '#94a3b8' : textColor }]}>{title}</Text>
+      )}
     </TouchableOpacity>
   );
 }

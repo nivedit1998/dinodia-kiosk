@@ -73,7 +73,7 @@ export function AdminSettingsScreen() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.header}>Admin Settings</Text>
+        <Text style={styles.header}>Homeowner Settings</Text>
         <Text style={styles.subheader}>Logged in as {user.username}</Text>
 
         <View style={styles.section}>
@@ -107,26 +107,26 @@ export function AdminSettingsScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Dinodia Hub</Text>
-            <PrimaryButton
-              title="Enable Remote Access (Nabu Casa)"
-              variant="ghost"
-              onPress={() => navigation.navigate('RemoteAccessSetup' as never)}
-              style={styles.secondaryButton}
-            />
-          </View>
-          <Text style={styles.helperText}>
-            Enable secure cloud access from the in-home kiosk without revealing your Dinodia Hub
-            password.
-          </Text>
-          <TextField
-            label="HA username"
-            placeholder="HA username"
-            value={haUsername}
-            onChangeText={setHaUsername}
+          <Text style={styles.sectionTitle}>Dinodia Hub</Text>
+          <PrimaryButton
+            title="Enable Remote Access (Nabu Casa)"
+            variant="ghost"
+            onPress={() => navigation.navigate('RemoteAccessSetup' as never)}
+            style={styles.secondaryButton}
           />
-          <TextField
-            label="Dinodia Hub URL (home Wi‑Fi)"
+        </View>
+        <Text style={styles.helperText}>
+          Enable secure cloud access from the in-home kiosk without revealing your Dinodia Hub
+          password.
+        </Text>
+        <TextField
+          label="Dinodia Hub username"
+          placeholder="Hub username"
+          value={haUsername}
+          onChangeText={setHaUsername}
+        />
+        <TextField
+          label="Dinodia Hub URL (home Wi‑Fi)"
             placeholder="https://home.example.com"
             value={haBaseUrl}
             onChangeText={setHaBaseUrl}

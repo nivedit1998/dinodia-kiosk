@@ -31,7 +31,7 @@ export async function haWsCall<T>(
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        reject(new Error('Home Assistant request timed out.'));
+        reject(new Error('Dinodia Hub request timed out.'));
       }
     }, timeoutMs);
 
@@ -51,11 +51,11 @@ export async function haWsCall<T>(
       } else if (result !== undefined) {
         resolve(result);
       } else {
-        reject(new Error('Home Assistant request failed.'));
+        reject(new Error('Dinodia Hub request failed.'));
       }
     };
 
-    ws.onerror = () => finish(new Error('Home Assistant connection failed.'));
+    ws.onerror = () => finish(new Error('Dinodia Hub connection failed.'));
 
     ws.onmessage = (event) => {
       let data: HaWsResult<T> | null = null;
@@ -99,11 +99,11 @@ export async function haWsCall<T>(
             } catch {
               // ignore and fall through to failure
             }
-            finish(new Error('Home Assistant authentication failed.'));
+            finish(new Error('Dinodia Hub authentication failed.'));
           })();
           return;
         }
-        finish(new Error('Home Assistant authentication failed.'));
+        finish(new Error('Dinodia Hub authentication failed.'));
         return;
       }
 
@@ -123,9 +123,7 @@ export async function haWsCall<T>(
           finish(undefined, data.result as T);
         } else {
           finish(
-            new Error(
-              data.error?.message || 'Home Assistant request was not successful.'
-            )
+            new Error(data.error?.message || 'Dinodia Hub request was not successful.')
           );
         }
       }

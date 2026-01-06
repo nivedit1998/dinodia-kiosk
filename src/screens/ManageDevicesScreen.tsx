@@ -16,6 +16,7 @@ import { TopBar } from '../components/ui/TopBar';
 import { HeaderMenu } from '../components/HeaderMenu';
 import { useSession } from '../store/sessionStore';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
+import { friendlyError } from '../ui/friendlyError';
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
@@ -52,7 +53,7 @@ export function ManageDevicesScreen() {
       const list = await fetchManagedDevices();
       setDevices(list);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load devices.');
+      setError(friendlyError(err));
     } finally {
       setLoading(false);
     }
@@ -87,7 +88,7 @@ export function ManageDevicesScreen() {
       await markDeviceStolen(deviceId);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update device.');
+      setError(friendlyError(err));
     } finally {
       setSavingId(null);
     }
@@ -100,7 +101,7 @@ export function ManageDevicesScreen() {
       await markDeviceActive(deviceId);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update device.');
+      setError(friendlyError(err));
     } finally {
       setSavingId(null);
     }
@@ -208,7 +209,7 @@ export function ManageDevicesScreen() {
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>Manage Devices</Text>
           <Text style={styles.heroCopy}>
-            Block stolen or lost devices instantly. Active devices can fetch HA secrets; stolen ones are locked out.
+            Block stolen or lost devices instantly. Active devices can fetch Dinodia Hub keys; stolen ones are locked out.
           </Text>
         </View>
 
