@@ -38,6 +38,8 @@ import type { Role } from '../models/roles';
 import { useSession } from '../store/sessionStore';
 import { useRemoteAccessStatus } from '../hooks/useRemoteAccessStatus';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
+import { getDeviceGroupingId } from '../utils/haDeviceIdentity';
+import { fetchAdminKwhBaselines } from '../api/kwhBaselines';
 import { TopBar } from '../components/ui/TopBar';
 import { buildBatteryPercentByDeviceGroup, getBatteryPercentForDevice } from '../utils/deviceBattery';
 import { palette, maxContentWidth, radii, shadows, spacing } from '../ui/theme';
@@ -99,6 +101,8 @@ function DashboardContent({
   const [hasEverFetchedSecrets, setHasEverFetchedSecrets] = useState(false);
   const [hubConfigStartMs, setHubConfigStartMs] = useState<number | null>(null);
   const { width: windowWidth } = useWindowDimensions();
+  const [kwhBaselines, setKwhBaselines] = useState<Record<string, number>>({});
+  const [pricePerKwh, setPricePerKwh] = useState<number | null>(null);
 
   const gridColumns = useMemo(() => {
     const usableWidth = Math.max(
@@ -131,6 +135,32 @@ function DashboardContent({
   useEffect(() => {
     setSelected(null);
   }, [haMode]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setKwhBaselines({});
+      return;
+    }
+    const sensorIds = Array.from(new Set(Object.values(kwhSensorByDevice)));
+    if (sensorIds.length === 0) {
+      setKwhBaselines({});
+      return;
+    }
+    void (async () => {
+      try {
+        const { baselines, pricePerKwh: price } = await fetchAdminKwhBaselines(sensorIds);
+        setKwhBaselines(baselines);
+        setPricePerKwh(price);
+      } catch (err) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn('Failed to fetch kWh totals', err);
+        }
+        setKwhBaselines({});
+        setPricePerKwh(null);
+      }
+    })();
+  }, [devices, isAdmin, kwhSensorByDevice]);
 
   // Ensure Home Mode secrets are available; otherwise show configuring overlay and retry.
   const ensureHubReady = useCallback(async (startedAtMs: number | null) => {
@@ -257,6 +287,26 @@ function DashboardContent({
 
   const sections = useMemo(() => buildDeviceSections(visibleDevices), [visibleDevices]);
   const rows = useMemo(() => buildSectionLayoutRows(sections, gridColumns), [gridColumns, sections]);
+  const kwhSensorByDevice = useMemo(() => {
+    const map: Record<string, string> = {};
+    devices.forEach((device) => {
+      if (isSensorDevice(device)) return;
+      const groupId = getDeviceGroupingId(device);
+      if (!groupId) return;
+      const sensor = devices.find(
+        (d) =>
+          d.entityId !== device.entityId &&
+          getDeviceGroupingId(d) === groupId &&
+          isSensorDevice(d) &&
+          typeof d.attributes?.unit_of_measurement === 'string' &&
+          d.attributes.unit_of_measurement === 'kWh'
+      );
+      if (sensor) {
+        map[device.entityId] = sensor.entityId;
+      }
+    });
+    return map;
+  }, [devices]);
   const baseCardHeight = useMemo(() => {
     const usableWidth = Math.max(
       GRID_MIN_CARD_WIDTH * GRID_MIN_COLUMNS,
@@ -360,6 +410,29 @@ function DashboardContent({
                         batteryPercent={getBatteryPercentForDevice(device, batteryByGroup)}
                         onAfterCommand={handleBackgroundRefresh}
                         onOpenDetails={handleOpenDetails}
+                        showControls={!isAdmin}
+                        kwhTotal={(() => {
+                          const sensorId = kwhSensorByDevice[device.entityId];
+                          if (!sensorId) return null;
+                          const currentSensor = devices.find((d) => d.entityId === sensorId);
+                          const current = currentSensor ? Number(currentSensor.state) : NaN;
+                          const baseline = kwhBaselines[sensorId];
+                          if (!Number.isFinite(current) || baseline === undefined) return null;
+                          const delta = current - baseline;
+                          return delta > 0 ? delta : 0;
+                        })()}
+                        energyCost={(() => {
+                          const sensorId = kwhSensorByDevice[device.entityId];
+                          if (!sensorId) return null;
+                          const currentSensor = devices.find((d) => d.entityId === sensorId);
+                          const current = currentSensor ? Number(currentSensor.state) : NaN;
+                          const baseline = kwhBaselines[sensorId];
+                          if (!Number.isFinite(current) || baseline === undefined) return null;
+                          if (pricePerKwh === null || !Number.isFinite(pricePerKwh)) return null;
+                          const usage = current - baseline;
+                          const cost = usage > 0 ? usage * pricePerKwh : 0;
+                          return Number.isFinite(cost) ? cost : null;
+                        })()}
                       />
                     </View>
                   );
@@ -478,9 +551,11 @@ function DashboardContent({
         />
       </View>
 
-      <View style={styles.spotifyCardWrap} pointerEvents="box-none">
-        <SpotifyCard />
-      </View>
+      {!isAdmin && (
+        <View style={styles.spotifyCardWrap} pointerEvents="box-none">
+          <SpotifyCard />
+        </View>
+      )}
       <Modal
         visible={areaMenuVisible}
         transparent
@@ -545,6 +620,8 @@ function DashboardContent({
         }
         linkedSensors={linkedSensors}
         allowSensorHistory
+        showControls={!isAdmin}
+        showStateText={!isAdmin}
       />
       <HeaderMenu
         visible={menuVisible}

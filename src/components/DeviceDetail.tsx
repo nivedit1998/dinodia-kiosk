@@ -10,6 +10,7 @@ import {
   ScrollView,
   Image,
   Alert,
+  TextInput,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import type { UIDevice } from '../models/device';
@@ -32,6 +33,7 @@ import { executeDeviceCommand } from '../devices/deviceExecutor';
 import { palette, radii, shadows, spacing } from '../ui/theme';
 import { fetchHomeModeSecrets } from '../api/haSecrets';
 import { assertHaUrlAllowed } from '../api/haUrlPolicy';
+import { updateDeviceOverride } from '../api/deviceOverrides';
 
 type Props = {
   device: UIDevice | null;
@@ -41,6 +43,8 @@ type Props = {
   relatedDevices?: UIDevice[];
   linkedSensors?: UIDevice[];
   allowSensorHistory?: boolean;
+  showControls?: boolean;
+  showStateText?: boolean;
 };
 
 export function DeviceDetail({
@@ -51,11 +55,18 @@ export function DeviceDetail({
   relatedDevices,
   linkedSensors,
   allowSensorHistory,
+  showControls = true,
+  showStateText = true,
 }: Props) {
   const { session, haMode } = useSession();
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [cameraRefreshToken, setCameraRefreshToken] = useState<number>(Date.now());
   const [cameraAuth, setCameraAuth] = useState<{ baseUrl: string; token: string } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editTravel, setEditTravel] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const label = device ? getPrimaryLabel(device) : null;
   const preset = useMemo(() => getDevicePreset(label), [label]);
@@ -65,6 +76,7 @@ export function DeviceDetail({
   const canShowHistory = Boolean(allowSensorHistory && session.user);
 
   const connection = session.haConnection;
+  const allowControl = session.user?.role === 'TENANT';
 
   useEffect(() => {
     if (label === 'Doorbell' || label === 'Home Security') {
@@ -117,8 +129,65 @@ export function DeviceDetail({
         }
       : { uri: '' };
 
+  const isAdmin = session.user?.role === 'ADMIN';
+  const isBlind = label === 'Blind';
+
+  const openEditor = () => {
+    if (!device) return;
+    setEditName(device.name ?? '');
+    setEditTravel(
+      typeof device.blindTravelSeconds === 'number' && Number.isFinite(device.blindTravelSeconds)
+        ? String(device.blindTravelSeconds)
+        : ''
+    );
+    setEditing(true);
+  };
+
+  const closeEditor = () => {
+    setEditing(false);
+    setSaving(false);
+  };
+
+  const handleSave = async () => {
+    if (!device) return;
+    setSaving(true);
+    setSaveError(null);
+    let travelValue: number | null | undefined = undefined;
+    const trimmed = editTravel.trim();
+    if (trimmed.length > 0) {
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        Alert.alert('Enter a positive number of seconds for blind travel time.');
+        setSaving(false);
+        return;
+      }
+      travelValue = parsed;
+    } else {
+      travelValue = null;
+    }
+
+    try {
+      await updateDeviceOverride({
+        entityId: device.entityId,
+        name: editName.trim() || device.name,
+        blindTravelSeconds: isBlind ? travelValue : undefined,
+      });
+      if (onCommandComplete) await Promise.resolve(onCommandComplete());
+      closeEditor();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message ? err.message : 'Please try again.';
+      setSaveError(message);
+      setSaving(false);
+    }
+  };
+
   async function sendCommand(command: string, value?: number) {
     if (!device) return;
+    if (!allowControl) {
+      Alert.alert('View only', 'Device control is available to tenants only.');
+      return;
+    }
     if (pendingCommand) return;
     setPendingCommand(command);
     try {
@@ -161,6 +230,39 @@ export function DeviceDetail({
         <View />
       </Pressable>
       <View style={styles.sheet}>
+        {editing && (
+          <View style={styles.editSheet}>
+            <Text style={styles.editTitle}>Edit device</Text>
+            <Text style={styles.editLabel}>Name</Text>
+            <TextInput
+              style={styles.editInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Device name"
+            />
+            {isBlind && (
+              <>
+                <Text style={styles.editLabel}>Blind travel time (seconds)</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editTravel}
+                  onChangeText={setEditTravel}
+                  placeholder="Leave empty to use default"
+                  keyboardType="number-pad"
+                />
+                {saveError ? <Text style={styles.editError}>{saveError}</Text> : null}
+              </>
+            )}
+            <View style={styles.editActions}>
+              <TouchableOpacity style={styles.editCancel} onPress={closeEditor} disabled={saving}>
+                <Text style={styles.editCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.editSave} onPress={handleSave} disabled={saving}>
+                <Text style={styles.editSaveText}>{saving ? 'Saving…' : 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         <View style={styles.handleBarWrapper}>
           <View style={styles.handleBar} />
         </View>
@@ -169,14 +271,20 @@ export function DeviceDetail({
             <Text style={styles.label}>{label}</Text>
             <Text style={styles.title}>{device?.name ?? ''}</Text>
             <Text style={styles.subtitle}>{area || 'Unassigned area'}</Text>
-            <Text style={styles.secondary}>{secondary}</Text>
+            {showStateText && <Text style={styles.secondary}>{secondary}</Text>}
           </View>
           <View style={[styles.headerIcon, { backgroundColor: preset.iconActiveBackground }]}>
             <Text style={styles.headerIconText}>{preset.icon}</Text>
           </View>
+          {device && isAdmin ? (
+            <TouchableOpacity style={styles.moreBtn} onPress={openEditor}>
+              <Text style={styles.moreText}>⋯</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         <ScrollView contentContainerStyle={styles.content}>
           {device &&
+            showControls &&
             renderControls({
               device,
               label,
@@ -184,6 +292,7 @@ export function DeviceDetail({
               onCommand: sendCommand,
               cameraSourceBuilder: buildCameraSource,
               relatedDevices,
+              allowControl,
             })}
           {device && sensors.length > 0 && (
             <LinkedSensorList sensors={sensors} canShowHistory={canShowHistory} userId={session.user?.id} />
@@ -204,6 +313,7 @@ function renderControls(opts: {
   onCommand: (command: string, value?: number) => Promise<void>;
   cameraSourceBuilder: (entityId: string) => { uri: string; headers?: Record<string, string> };
   relatedDevices?: UIDevice[];
+  allowControl: boolean;
 }) {
   const {
     device,
@@ -212,6 +322,7 @@ function renderControls(opts: {
     onCommand,
     cameraSourceBuilder,
     relatedDevices,
+    allowControl,
   } = opts;
   const state = (device.state ?? '').toString();
   const attrs = device.attributes ?? {};
@@ -231,21 +342,21 @@ function renderControls(opts: {
           <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() => onCommand('media/previous')}
-            disabled={!!pendingCommand}
+            disabled={!!pendingCommand || !allowControl}
           >
             <Text style={styles.secondaryButtonText}>Prev</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={() => onCommand('media/play_pause')}
-            disabled={!!pendingCommand}
+            disabled={!!pendingCommand || !allowControl}
           >
             <Text style={styles.primaryButtonText}>{state === 'playing' ? 'Pause' : 'Play'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() => onCommand('media/next')}
-            disabled={!!pendingCommand}
+            disabled={!!pendingCommand || !allowControl}
           >
             <Text style={styles.secondaryButtonText}>Next</Text>
           </TouchableOpacity>
@@ -310,6 +421,7 @@ function renderControls(opts: {
           device,
           pendingCommand,
           onCommand,
+          allowControl,
         })
       )}
     </View>
@@ -321,8 +433,9 @@ function renderActionControl(params: {
   device: UIDevice;
   pendingCommand: string | null;
   onCommand: (command: string, value?: number) => Promise<void>;
+  allowControl: boolean;
 }) {
-  const { action, device, pendingCommand, onCommand } = params;
+  const { action, device, pendingCommand, onCommand, allowControl } = params;
   const attrs = device.attributes ?? {};
   const blindPosition = getBlindPosition(attrs);
   const pendingId = resolvePendingId(action);
@@ -341,7 +454,7 @@ function renderActionControl(params: {
           maximumValue={action.max}
           step={action.step ?? 1}
           value={value}
-          disabled={!!pendingCommand}
+          disabled={!!pendingCommand || !allowControl}
           onSlidingComplete={(val) => {
             const cmd = action.command;
             onCommand(cmd, val);
@@ -357,6 +470,7 @@ function renderActionControl(params: {
   if (action.kind === 'fixed') {
     const disabled =
       !!pendingCommand ||
+      !allowControl ||
       (action.command === 'blind/open' && blindPosition === 100) ||
       (action.command === 'blind/close' && blindPosition === 0);
     return (
@@ -376,7 +490,7 @@ function renderActionControl(params: {
       <TouchableOpacity
         key={action.id}
         style={[styles.primaryButton, { marginBottom: 10 }]}
-        disabled={!!pendingCommand}
+        disabled={!!pendingCommand || !allowControl}
         onPress={() => onCommand(action.command, action.value)}
       >
         <Text style={styles.primaryButtonText}>{action.label}</Text>
@@ -391,7 +505,7 @@ function renderActionControl(params: {
       <TouchableOpacity
         key={action.id}
         style={[styles.primaryButton, { marginBottom: 10 }]}
-        disabled={!!pendingCommand}
+        disabled={!!pendingCommand || !allowControl}
         onPress={() => onCommand(cmd)}
       >
         <Text style={styles.primaryButtonText}>{isOn ? `Turn off ${getPrimaryLabel(device)}` : `Turn on ${getPrimaryLabel(device)}`}</Text>
@@ -809,4 +923,58 @@ const styles = StyleSheet.create({
   },
   closeText: { fontSize: 16, fontWeight: '700', color: palette.text },
   errorText: { color: '#ef4444' },
+  moreBtn: {
+    padding: 8,
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  moreText: { fontSize: 22, color: palette.text },
+  editSheet: {
+    position: 'absolute',
+    top: 24,
+    left: 16,
+    right: 16,
+    zIndex: 10,
+    backgroundColor: palette.surface,
+    borderRadius: radii.xl,
+    padding: spacing.md,
+    ...shadows.medium,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  editTitle: { fontSize: 18, fontWeight: '700', marginBottom: spacing.sm, color: palette.text },
+  editLabel: { fontSize: 14, fontWeight: '600', marginTop: spacing.sm, marginBottom: spacing.xs, color: palette.text },
+  editInput: {
+    borderWidth: 1,
+    borderColor: palette.outline,
+    borderRadius: radii.lg,
+    padding: spacing.sm,
+    fontSize: 16,
+    backgroundColor: palette.surfaceMuted,
+    color: palette.text,
+  },
+  editError: { color: '#b91c1c', marginTop: spacing.xs, fontSize: 12 },
+  editActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: spacing.md,
+    columnGap: spacing.sm,
+  },
+  editCancel: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.lg,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.outline,
+  },
+  editCancelText: { color: palette.text, fontWeight: '700' },
+  editSave: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.lg,
+    backgroundColor: palette.primary,
+  },
+  editSaveText: { color: '#fff', fontWeight: '700' },
 });

@@ -24,17 +24,25 @@ type Props = {
   onAfterCommand?: () => Promise<void> | void;
   onOpenDetails?: (device: UIDevice) => void;
   batteryPercent?: number | null;
+  showControls?: boolean;
+  kwhTotal?: number | null;
+  energyCost?: number | null;
 };
 
 export const DeviceCard = memo(function DeviceCard({
   device,
+  isAdmin,
   size = 'small',
   onAfterCommand,
   onOpenDetails,
   batteryPercent = null,
+  showControls = true,
+  kwhTotal = null,
+  energyCost = null,
 }: Props) {
   const label = getPrimaryLabel(device);
   const { session, haMode } = useSession();
+  const allowControl = session.user?.role === 'TENANT';
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
 
   const actions = useMemo(() => getActionsForDevice(device, 'dashboard'), [device]);
@@ -72,6 +80,10 @@ export const DeviceCard = memo(function DeviceCard({
       : { fontSize: 13 };
 
   async function sendAction(action: DeviceActionSpec, overrideValue?: number) {
+    if (!allowControl) {
+      Alert.alert('View only', 'Device control is available to tenants only.');
+      return;
+    }
     if (pendingCommand) return;
     const resolved = resolveActionCommand(action, device, overrideValue);
     if (!resolved) return;
@@ -128,6 +140,16 @@ export const DeviceCard = memo(function DeviceCard({
       ]}
     >
       <View style={styles.body}>
+        <View style={styles.topLineSpacer} />
+        {batteryDisplay && (
+          <Text
+            style={[styles.batteryTopOverlay, { color: batteryDisplay.fg }]}
+            numberOfLines={1}
+            ellipsizeMode="clip"
+          >
+            {batteryDisplay.text}
+          </Text>
+        )}
         <View style={styles.content}>
           <View style={styles.headerRow}>
             <Text
@@ -139,17 +161,6 @@ export const DeviceCard = memo(function DeviceCard({
             >
               {device.name}
             </Text>
-            {batteryDisplay && (
-              <View style={[styles.batteryPill, { backgroundColor: batteryDisplay.bg }]}>
-                <Text
-                  style={[styles.batteryText, { color: batteryDisplay.fg }]}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {batteryDisplay.text}
-                </Text>
-              </View>
-            )}
           </View>
           <Text
             style={[styles.secondary, secondaryStyle, { color: active ? '#475569' : '#9ca3af' }]}
@@ -158,132 +169,148 @@ export const DeviceCard = memo(function DeviceCard({
           >
             {secondaryText}
           </Text>
-        </View>
-
-        <View style={styles.footer}>
-          {label === 'Blind' ? (
-            <View style={styles.blindActionsRow}>
-              {getBlindActions(actions).map((action) => {
-                const isOpen = action.command === 'blind/open';
-                const disabled =
-                  hasPending || (isOpen ? blindPosition === 100 : blindPosition === 0);
-                const isPending = pendingCommand === action.command;
-                return (
-                  <TouchableOpacity
-                    key={action.id}
-                    onPress={() => sendAction(action)}
-                    activeOpacity={0.85}
-                    disabled={disabled}
-                    style={[
-                      styles.secondaryActionButton,
-                      {
-                        backgroundColor: active ? preset.iconActiveBackground : '#0f172a',
-                        opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
-                        height: CONTROL_HEIGHT,
-                      },
-                    ]}
-                  >
-                    {isPending ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.primaryActionText}>{action.label}</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+          {kwhTotal !== null && Number.isFinite(kwhTotal) && isAdmin && (
+            <View style={styles.energyBlock}>
+              <Text style={styles.energyLabel}>Energy Usage:</Text>
+              <Text style={styles.energyValue}>{kwhTotal.toFixed(2)} kWh</Text>
+              {energyCost !== null && Number.isFinite(energyCost) && (
+                <>
+                  <Text style={styles.energyLabel}>Cost:</Text>
+                  <Text style={styles.energyValue}>£{energyCost.toFixed(2)}</Text>
+                </>
+              )}
             </View>
-          ) : label === 'Boiler' ? (
-            <View style={styles.boilerControlsRow}>
-              <TouchableOpacity
-                onPress={() => {
-                  const down = actions.find(
-                    (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_down'
-                  );
-                  if (down) sendAction(down);
-                }}
-                activeOpacity={0.85}
-                disabled={hasPending}
-                style={[
-                  styles.boilerButton,
-                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
-                  hasPending && styles.primaryActionButtonDisabled,
-                ]}
-              >
-                {pendingCommand === 'boiler/temp_down' ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    - Temp
-                  </Text>
-                )}
-              </TouchableOpacity>
-
-              <View style={[styles.boilerTarget, { height: CONTROL_HEIGHT }]}>
-                <Text style={styles.boilerTargetValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-                  {typeof attrs.temperature === 'number'
-                    ? `${Math.round(attrs.temperature)}°`
-                    : typeof (attrs as any).target_temp === 'number'
-                    ? `${Math.round((attrs as any).target_temp)}°`
-                    : '—'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => {
-                  const up = actions.find(
-                    (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_up'
-                  );
-                    if (up) sendAction(up);
-                }}
-                activeOpacity={0.85}
-                disabled={hasPending}
-                style={[
-                  styles.boilerButton,
-                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
-                  hasPending && styles.primaryActionButtonDisabled,
-                ]}
-              >
-                {pendingCommand === 'boiler/temp_up' ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    + Temp
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : (
-            primaryAction && (
-              <TouchableOpacity
-                onPress={() => sendAction(primaryAction)}
-                activeOpacity={0.85}
-                disabled={hasPending}
-                style={[
-                  styles.primaryActionButton,
-                  { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
-                  hasPending && styles.primaryActionButtonDisabled,
-                ]}
-              >
-                {hasPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <View style={styles.primaryActionContent}>
-                    <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
-                    <Text
-                      style={styles.primaryActionText}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                      adjustsFontSizeToFit
-                      minimumFontScale={0.85}
-                    >
-                      {primaryActionLabel(primaryAction, device)}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            )
           )}
         </View>
+
+        {showControls && (
+          <View style={styles.footer}>
+            {label === 'Blind' ? (
+              <View style={styles.blindActionsRow}>
+                {getBlindActions(actions).map((action) => {
+                  const isOpen = action.command === 'blind/open';
+                  const disabled =
+                    hasPending ||
+                    !allowControl ||
+                    (isOpen ? blindPosition === 100 : blindPosition === 0);
+                  const isPending = pendingCommand === action.command;
+                  return (
+                    <TouchableOpacity
+                      key={action.id}
+                      onPress={() => sendAction(action)}
+                      activeOpacity={0.85}
+                      disabled={disabled}
+                      style={[
+                        styles.secondaryActionButton,
+                        {
+                          backgroundColor: active ? preset.iconActiveBackground : '#0f172a',
+                          opacity: disabled ? 0.35 : isPending ? 0.6 : 1,
+                          height: CONTROL_HEIGHT,
+                        },
+                      ]}
+                    >
+                      {isPending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.primaryActionText}>{action.label}</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : label === 'Boiler' ? (
+              <View style={styles.boilerControlsRow}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const down = actions.find(
+                      (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_down'
+                    );
+                    if (down) sendAction(down);
+                  }}
+                  activeOpacity={0.85}
+                  disabled={hasPending || !allowControl}
+                  style={[
+                    styles.boilerButton,
+                    { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                    hasPending && styles.primaryActionButtonDisabled,
+                  ]}
+                >
+                  {pendingCommand === 'boiler/temp_down' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                      - Temp
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                <View style={[styles.boilerTarget, { height: CONTROL_HEIGHT }]}>
+                  <Text style={styles.boilerTargetValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                    {typeof attrs.temperature === 'number'
+                      ? `${Math.round(attrs.temperature)}°`
+                      : typeof (attrs as any).target_temp === 'number'
+                      ? `${Math.round((attrs as any).target_temp)}°`
+                      : '—'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    const up = actions.find(
+                      (a) => (a.kind === 'button' || a.kind === 'fixed') && a.command === 'boiler/temp_up'
+                    );
+                    if (up) sendAction(up);
+                  }}
+                  activeOpacity={0.85}
+                  disabled={hasPending || !allowControl}
+                  style={[
+                    styles.boilerButton,
+                    { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                    hasPending && styles.primaryActionButtonDisabled,
+                  ]}
+                >
+                  {pendingCommand === 'boiler/temp_up' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                      + Temp
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              primaryAction && (
+                <TouchableOpacity
+                  onPress={() => sendAction(primaryAction)}
+                  activeOpacity={0.85}
+                  disabled={hasPending || !allowControl}
+                  style={[
+                    styles.primaryActionButton,
+                    { backgroundColor: active ? preset.iconActiveBackground : '#0f172a', height: CONTROL_HEIGHT },
+                    hasPending && styles.primaryActionButtonDisabled,
+                  ]}
+                >
+                  {hasPending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <View style={styles.primaryActionContent}>
+                      <Text style={styles.primaryActionIcon}>{preset.icon}</Text>
+                      <Text
+                        style={styles.primaryActionText}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.85}
+                      >
+                        {primaryActionLabel(primaryAction, device)}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )
+            )}
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -446,7 +473,9 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     borderRadius: radii.lg,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xs,
     borderWidth: 1,
     borderColor: palette.outline,
     backgroundColor: palette.surface,
@@ -457,20 +486,39 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     columnGap: spacing.xs,
   },
-  batteryPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radii.pill,
-    maxWidth: '100%',
-    flexShrink: 0,
+  topLineSpacer: {
+    height: 12,
   },
-  batteryText: { fontSize: 11, fontWeight: '700' },
+  batteryTopOverlay: {
+    position: 'absolute',
+    top: 1,
+    left: spacing.md,
+    right: spacing.md,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   icon: { fontSize: 18, color: '#fff' },
-  body: { marginTop: spacing.sm, flex: 1 },
+  body: { marginTop: 1, flex: 1 },
   content: { gap: 0 },
   footer: { marginTop: 'auto', paddingTop: spacing.xs },
   name: { fontSize: 15, fontWeight: '700', color: palette.text },
-  secondary: { fontSize: 12, color: palette.textMuted, marginTop: spacing.xs },
+  secondary: { fontSize: 12, color: palette.textMuted, marginTop: 2 },
+  energyBlock: {
+    marginTop: spacing.xs,
+    alignSelf: 'flex-start',
+  },
+  energyLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.textMuted,
+  },
+  energyValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.textMuted,
+  },
   boilerControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',

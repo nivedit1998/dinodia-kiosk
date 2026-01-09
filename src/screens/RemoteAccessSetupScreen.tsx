@@ -3,12 +3,11 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Linking,
   Modal,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -17,6 +16,7 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { TopBar } from '../components/ui/TopBar';
 import { HeaderMenu } from '../components/HeaderMenu';
 import { palette, radii, shadows, spacing, typography, maxContentWidth } from '../ui/theme';
+import { WizardScaffold } from '../components/ui/WizardScaffold';
 import { useSession } from '../store/sessionStore';
 import { fetchHomeModeSecrets } from '../api/haSecrets';
 import { platformFetch } from '../api/platformFetch';
@@ -27,12 +27,14 @@ import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import CookieManager from '@react-native-cookies/cookies';
 import { friendlyError } from '../ui/friendlyError';
 import { InlineNotice } from '../components/ui/InlineNotice';
+import { checkHomeModeReachable } from '../api/remoteAccess';
 
 const LOG_TAG = '[RemoteAccessSetup]';
 
 type LeaseResponse = { ok?: boolean; leaseToken?: string; expiresAt?: string; error?: string; stepUpRequired?: boolean };
 type SecretsResponse = { haUsername?: string; haPassword?: string; error?: string; stepUpRequired?: boolean };
 type SaveCloudUrlResponse = { ok?: boolean; cloudEnabled?: boolean; error?: string; stepUpRequired?: boolean };
+type WizardStep = 0 | 1 | 2 | 3 | 4; // intro, home, verify, connect, result
 
 function msUntil(iso: string | null): number | null {
   if (!iso) return null;
@@ -158,9 +160,10 @@ export function RemoteAccessSetupScreen() {
   const { session, haMode, setHaMode, setSession, resetApp } = useSession();
   const { wifiName, batteryLevel } = useDeviceStatus();
   const user = session.user;
-  const cloudEnabled = Boolean(session.haConnection?.cloudEnabled);
   const isAdmin = user?.role === 'ADMIN';
 
+  const [step, setStep] = useState<WizardStep>(0);
+  const [openingWeb, setOpeningWeb] = useState(false);
   const [status, setStatus] = useState<
     'idle' | 'sending' | 'waiting' | 'leasing' | 'ready' | 'saving' | 'testing' | 'done'
   >('idle');
@@ -181,6 +184,11 @@ export function RemoteAccessSetupScreen() {
   const webRef = useRef<WebView>(null);
   const saveInFlightRef = useRef(false);
   const lastCapturedUrlRef = useRef<string | null>(null);
+  const leaseTokenRef = useRef<string | null>(null);
+  const leaseExpiresAtRef = useRef<string | null>(null);
+  const haCredsRef = useRef<{ haUsername: string; haPassword: string } | null>(null);
+  const [homeReachable, setHomeReachable] = useState(false);
+  const [checkingHome, setCheckingHome] = useState(false);
 
   const leaseMsLeft = useMemo(() => msUntil(leaseExpiresAt), [leaseExpiresAt]);
   const leaseActive = Boolean(leaseToken && leaseMsLeft != null && leaseMsLeft > 0 && haCreds);
@@ -192,7 +200,22 @@ export function RemoteAccessSetupScreen() {
     setChallengeId(null);
     setChallengeError(null);
     saveInFlightRef.current = false;
+    leaseTokenRef.current = null;
+    leaseExpiresAtRef.current = null;
+    haCredsRef.current = null;
   }, []);
+
+  useEffect(() => {
+    leaseTokenRef.current = leaseToken;
+  }, [leaseToken]);
+
+  useEffect(() => {
+    leaseExpiresAtRef.current = leaseExpiresAt;
+  }, [leaseExpiresAt]);
+
+  useEffect(() => {
+    haCredsRef.current = haCreds;
+  }, [haCreds]);
 
   useEffect(() => {
     const ms = leaseMsLeft;
@@ -211,16 +234,23 @@ export function RemoteAccessSetupScreen() {
     // Remote access setup is home-mode only.
   }, [haMode, setHaMode]);
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') {
-        clearSensitive();
-        setWebVisible(false);
-        setStatus('idle');
-      }
+  const goToDashboard = useCallback(async () => {
+    await closeWeb();
+    clearSensitive();
+    setStatus('idle');
+    setStep(0);
+    navigation.getParent()?.navigate('DashboardTab', {
+      screen: isAdmin ? ('AdminDashboard' as never) : ('TenantDashboard' as never),
     });
-    return () => sub.remove();
-  }, [clearSensitive]);
+  }, [clearSensitive, closeWeb, isAdmin, navigation]);
+
+  const goBackStep = useCallback(() => {
+    setStep((s) => (s > 0 ? ((s - 1) as WizardStep) : s));
+  }, []);
+
+  const goNextStep = useCallback(() => {
+    setStep((s) => (s < 4 ? ((s + 1) as WizardStep) : s));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -263,6 +293,7 @@ export function RemoteAccessSetupScreen() {
       return `${baseUrl}/config/cloud/account`;
     }
   }, [baseUrl]);
+
   const dashboardScreen = isAdmin ? 'AdminDashboard' : 'TenantDashboard';
   const addDevicesScreen = isAdmin ? null : 'TenantAddDevices';
   const isHttpsHa = useMemo(() => {
@@ -295,7 +326,7 @@ export function RemoteAccessSetupScreen() {
     }
   }, [user]);
 
-  const mintLeaseAndFetchCreds = useCallback(async () => {
+  const mintLeaseOnly = useCallback(async () => {
     if (!user) return;
     setStatus('leasing');
     try {
@@ -305,24 +336,34 @@ export function RemoteAccessSetupScreen() {
       if (!lease?.leaseToken || !lease?.expiresAt) {
         throw new Error(lease?.error || 'Email verification is required.');
       }
+      leaseTokenRef.current = lease.leaseToken;
+      leaseExpiresAtRef.current = lease.expiresAt;
       setLeaseToken(lease.leaseToken);
       setLeaseExpiresAt(lease.expiresAt);
-
-      const { data: secrets } = await platformFetch<SecretsResponse>(
-        '/api/kiosk/remote-access/secrets',
-        { method: 'POST', body: JSON.stringify({ leaseToken: lease.leaseToken }) }
-      );
-      if (!secrets?.haUsername || !secrets?.haPassword) {
-        throw new Error(secrets?.error || 'Unable to load Dinodia Hub credentials.');
-      }
-      setHaCreds({ haUsername: secrets.haUsername, haPassword: secrets.haPassword });
       setStatus('ready');
     } catch (err) {
       clearSensitive();
       setStatus('idle');
       setChallengeError(friendlyError(err, 'remoteAccess'));
+      throw err;
     }
   }, [clearSensitive, user]);
+
+  const fetchHubCreds = useCallback(async () => {
+    const token = leaseTokenRef.current;
+    if (!token) {
+      throw new Error('Email verification is required.');
+    }
+    const { data: secrets } = await platformFetch<SecretsResponse>('/api/kiosk/remote-access/secrets', {
+      method: 'POST',
+      body: JSON.stringify({ leaseToken: token }),
+    });
+    if (!secrets?.haUsername || !secrets?.haPassword) {
+      throw new Error(secrets?.error || 'Unable to load Dinodia Hub credentials.');
+    }
+    haCredsRef.current = { haUsername: secrets.haUsername, haPassword: secrets.haPassword };
+    setHaCreds({ haUsername: secrets.haUsername, haPassword: secrets.haPassword });
+  }, []);
 
   useEffect(() => {
     if (!challengeId) return;
@@ -334,9 +375,24 @@ export function RemoteAccessSetupScreen() {
         if (cancelled) return;
         if (st === 'APPROVED') {
           const identity = await getDeviceIdentity();
-          await completeStepUpChallenge(challengeId, identity.deviceId, identity.deviceLabel);
+          try {
+            await completeStepUpChallenge(challengeId, identity.deviceId, identity.deviceLabel);
+          } catch {
+            // retry a couple times before failing
+            let attempts = 0;
+            while (attempts < 2) {
+              attempts += 1;
+              try {
+                await new Promise((r) => setTimeout(r, 1000));
+                await completeStepUpChallenge(challengeId, identity.deviceId, identity.deviceLabel);
+                break;
+              } catch {
+                if (attempts >= 2) throw new Error('Unable to finalize verification. Please try again.');
+              }
+            }
+          }
           if (cancelled) return;
-          await mintLeaseAndFetchCreds();
+          await mintLeaseOnly().catch(() => undefined);
           return;
         }
         if (st === 'EXPIRED' || st === 'NOT_FOUND') {
@@ -346,7 +402,7 @@ export function RemoteAccessSetupScreen() {
         }
         if (st === 'CONSUMED') {
           // In case the device missed the APPROVED state, try to mint a lease.
-          await mintLeaseAndFetchCreds();
+          await mintLeaseOnly().catch(() => undefined);
           return;
         }
       } catch (err) {
@@ -366,7 +422,7 @@ export function RemoteAccessSetupScreen() {
     return () => {
       cancelled = true;
     };
-  }, [challengeId, mintLeaseAndFetchCreds]);
+  }, [challengeId, mintLeaseOnly]);
 
   const handleResend = useCallback(async () => {
     if (!challengeId) return;
@@ -402,15 +458,53 @@ export function RemoteAccessSetupScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        // Keep the ~10 minute verification window even if the user switches to Mail to click the link.
+        // Just close the web view to avoid leaving sensitive pages open in the app switcher.
+        closeWeb();
+      }
+    });
+    return () => sub.remove();
+  }, [closeWeb]);
+
   const openWeb = useCallback(() => {
-    if (!leaseActive || !accountUrl) {
-      Alert.alert('Verification required', 'Verify your email to continue.');
-      return;
-    }
-    setLockdownEnabled(false);
-    setWebVisible(true);
-    setWebKey((k) => k + 1);
-  }, [accountUrl, leaseActive]);
+    if (!accountUrl) return;
+    const ensureLeaseAndCreds = async (): Promise<boolean> => {
+      let attempt = 0;
+      while (attempt < 3) {
+        try {
+          const msLeft = msUntil(leaseExpiresAtRef.current);
+          if (!leaseTokenRef.current || !msLeft || msLeft <= 0) {
+            await mintLeaseOnly();
+          }
+          await fetchHubCreds();
+          return true;
+        } catch (err) {
+          attempt += 1;
+          if (attempt >= 3) {
+            throw err;
+          }
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+        }
+      }
+      return false;
+    };
+    if (openingWeb) return;
+    setOpeningWeb(true);
+    ensureLeaseAndCreds()
+      .then((ok) => {
+        if (!ok) return;
+        setLockdownEnabled(false);
+        setWebVisible(true);
+        setWebKey((k) => k + 1);
+      })
+      .catch((err) => {
+        Alert.alert('Verification required', friendlyError(err, 'remoteAccess'));
+      })
+      .finally(() => setOpeningWeb(false));
+  }, [accountUrl, fetchHubCreds, mintLeaseOnly, openingWeb]);
 
   const onWebMessage = useCallback(
     async (event: any) => {
@@ -430,16 +524,42 @@ export function RemoteAccessSetupScreen() {
       if (parsed?.type !== 'CLOUD_URL') return;
       const normalized = normalizeCloudUrl(parsed?.url);
       if (!normalized) return;
-      if (!leaseToken) return;
       if (lastCapturedUrlRef.current === normalized) return;
 
+      // Ensure lease is still valid; if expired, re-mint within the approval window.
+      try {
+        const currentExpiry = leaseExpiresAtRef.current;
+        const currentLease = leaseTokenRef.current;
+        const msLeft = msUntil(currentExpiry);
+        if (!currentLease || !msLeft || msLeft <= 0) {
+          let attempt = 0;
+          while (attempt < 3) {
+            try {
+              await mintLeaseOnly();
+              break;
+            } catch (err) {
+              attempt += 1;
+              if (attempt >= 3) throw err;
+              await new Promise((r) => setTimeout(r, 500 * attempt));
+            }
+          }
+        }
+      } catch (err) {
+        setStatus('idle');
+        setChallengeError(friendlyError(err, 'remoteAccess'));
+        return;
+      }
+
+      const tokenToUse = leaseTokenRef.current;
+      if (!tokenToUse) return;
       lastCapturedUrlRef.current = normalized;
       saveInFlightRef.current = true;
       setStatus('saving');
+      setStep(4);
       try {
         const { data } = await platformFetch<SaveCloudUrlResponse>(
           '/api/kiosk/remote-access/cloud-url',
-          { method: 'POST', body: JSON.stringify({ leaseToken, cloudUrl: normalized }) }
+          { method: 'POST', body: JSON.stringify({ leaseToken: tokenToUse, cloudUrl: normalized }) }
         );
         if (!data?.ok) {
           throw new Error(data?.error || 'We could not save remote access.');
@@ -459,7 +579,6 @@ export function RemoteAccessSetupScreen() {
         setVerifyMessage(null);
         setWebVisible(false);
         setWebKey((k) => k + 1);
-        clearSensitive();
 
         const testUrl = normalized;
         try {
@@ -478,6 +597,7 @@ export function RemoteAccessSetupScreen() {
 
         setStatus('done');
         lastCapturedUrlRef.current = null;
+        clearSensitive();
         Alert.alert('Saved', 'Remote access detected and saved.');
       } catch (err) {
         saveInFlightRef.current = false;
@@ -485,10 +605,26 @@ export function RemoteAccessSetupScreen() {
         Alert.alert('Error', friendlyError(err, 'remoteAccess'));
       }
     },
-    [clearSensitive, leaseToken, setSession, user]
+    [clearSensitive, leaseExpiresAt, leaseToken, mintLeaseOnly, setSession, user]
   );
 
-  const canProceed = Boolean(user && baseUrl);
+  const canProceed = Boolean(user && baseUrl && isAdmin);
+  const stepLabel = `Step ${step + 1} of 5`;
+
+  const refreshHomeReachable = useCallback(async () => {
+    setCheckingHome(true);
+    try {
+      const reachable = await checkHomeModeReachable();
+      setHomeReachable(Boolean(reachable));
+    } finally {
+      setCheckingHome(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    refreshHomeReachable();
+  }, [refreshHomeReachable, step]);
   const allowedHosts = useMemo(() => {
     if (!baseUrl) return new Set<string>();
     try {
@@ -689,6 +825,288 @@ export function RemoteAccessSetupScreen() {
     []
   );
 
+  const wizard = useMemo(() => {
+    if (!isAdmin) {
+      return {
+        title: 'Remote Access Setup',
+        subtitle: 'Only homeowners can set up remote access.',
+        showBack: false,
+        showNext: true,
+        nextLabel: 'Close',
+        canNext: true,
+        onNext: goToDashboard,
+        body: (
+          <View style={styles.block}>
+            <Text style={styles.bigIcon}>🔒</Text>
+            <Text style={styles.bodyText}>
+              Sign in as a homeowner/admin to enable remote access.
+            </Text>
+          </View>
+        ),
+      };
+    }
+
+    if (!baseUrl) {
+      return {
+        title: 'Remote Access Setup',
+        subtitle: 'Dinodia Hub not detected.',
+        showBack: false,
+        showNext: true,
+        nextLabel: 'Close',
+        canNext: true,
+        onNext: goToDashboard,
+        body: (
+          <View style={styles.block}>
+            <Text style={styles.bigIcon}>⚠️</Text>
+            <Text style={styles.bodyText}>
+              Home mode must be connected to your Dinodia Hub to continue.
+            </Text>
+            <InlineNotice message="Make sure you are on your home Wi‑Fi and signed in again." type="warning" />
+          </View>
+        ),
+      };
+    }
+
+    if (step === 0) {
+      return {
+        title: 'Have your Nabu Casa login ready',
+        subtitle: 'You will log into your Nabu Casa account on your Dinodia Hub to enable remote access.',
+        showBack: false,
+        showNext: true,
+        nextLabel: 'Next',
+        canNext: canProceed,
+        onNext: () => setStep(1),
+        body: (
+          <View style={styles.block}>
+            <Text style={styles.bigIcon}>🔑</Text>
+            <Text style={styles.bodyText}>
+              Before you start, make sure you know your Nabu Casa email + password.
+            </Text>
+            <PrimaryButton
+              title="Open Nabu Casa account page"
+              variant="ghost"
+              onPress={() => Linking.openURL('https://account.nabucasa.com/')}
+            />
+            <View style={styles.list}>
+              <Text style={styles.listItem}>• We will never show the remote access URL in the app.</Text>
+              <Text style={styles.listItem}>• Setup is available for ~10 minutes after email verification.</Text>
+            </View>
+          </View>
+        ),
+      };
+    }
+
+    if (step === 1) {
+      return {
+        title: 'Make sure you are at home',
+        subtitle: 'This requires a direct connection to your Dinodia Hub over home Wi‑Fi.',
+        showBack: true,
+        showNext: true,
+        nextLabel: 'Next',
+        canBack: true,
+        onBack: goBackStep,
+        canNext: homeReachable && canProceed,
+        onNext: () => setStep(2),
+        body: (
+          <View style={styles.block}>
+            <Text style={styles.bigIcon}>{homeReachable ? '✅' : '📡'}</Text>
+            <Text style={styles.bodyText}>
+              {checkingHome
+                ? 'Checking Dinodia Hub reachability…'
+                : homeReachable
+                ? 'Dinodia Hub reachable.'
+                : 'Dinodia Hub not reachable.'}
+            </Text>
+            <PrimaryButton
+              title={checkingHome ? 'Checking…' : 'Check again'}
+              variant="ghost"
+              onPress={refreshHomeReachable}
+              disabled={checkingHome}
+            />
+            {!homeReachable && !checkingHome ? (
+              <InlineNotice
+                type="warning"
+                message="Connect to your home Wi‑Fi and ensure the Dinodia Hub is powered on."
+              />
+            ) : null}
+          </View>
+        ),
+      };
+    }
+
+    if (step === 2) {
+      const minutesLeft = leaseMsLeft != null && leaseMsLeft > 0 ? Math.ceil(leaseMsLeft / 60000) : null;
+      return {
+        title: 'Verify your email',
+        subtitle: 'We will send a verification email to unlock setup for ~10 minutes.',
+        showBack: true,
+        showNext: true,
+        nextLabel: 'Next',
+        canBack: true,
+        onBack: goBackStep,
+        canNext: status === 'ready' && leaseActive,
+        onNext: () => setStep(3),
+        body: (
+          <View style={styles.block}>
+            {status === 'idle' ? (
+              <PrimaryButton title="Verify email to continue" onPress={startStepUp} />
+            ) : null}
+
+            {status === 'sending' ? (
+              <View style={styles.progressRow}>
+                <ActivityIndicator size="small" color={palette.primary} />
+                <Text style={styles.progressText}>Sending verification email…</Text>
+              </View>
+            ) : null}
+
+            {status === 'waiting' ? (
+              <View style={styles.panel}>
+                <Text style={styles.panelTitle}>Check your email</Text>
+                <Text style={styles.panelText}>
+                  Click the verification link, then return here. This unlocks remote access setup for ~10 minutes.
+                </Text>
+                <View style={styles.panelActions}>
+                  <PrimaryButton title="Resend email" variant="ghost" onPress={handleResend} />
+                  <PrimaryButton
+                    title="Cancel"
+                    variant="danger"
+                    onPress={() => {
+                      clearSensitive();
+                      setStatus('idle');
+                    }}
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            {status === 'leasing' ? (
+              <View style={styles.progressRow}>
+                <ActivityIndicator size="small" color={palette.primary} />
+                <Text style={styles.progressText}>Unlocking setup…</Text>
+              </View>
+            ) : null}
+
+            {status === 'ready' ? (
+              <View style={styles.successPanel}>
+                <Text style={styles.successTitle}>Verified</Text>
+                <Text style={styles.successText}>
+                  {minutesLeft ? `Setup window: ~${minutesLeft} min left.` : 'Setup window is active.'}
+                </Text>
+                <PrimaryButton
+                  title="Lock again"
+                  variant="ghost"
+                  onPress={() => {
+                    clearSensitive();
+                    setStatus('idle');
+                  }}
+                />
+              </View>
+            ) : null}
+
+            <InlineNotice message={challengeError} type="error" />
+          </View>
+        ),
+      };
+    }
+
+    if (step === 3) {
+      return {
+        title: 'Login on Dinodia Hub',
+        subtitle:
+          'We will open your Dinodia Hub, auto-fill your Home Assistant login, and detect the Nabu Casa URL when you unhide it.',
+        showBack: true,
+        showNext: true,
+        backLabel: 'Back',
+        nextLabel: 'Login to Nabu Casa on Dinodia Hub',
+        canBack: true,
+        onBack: goBackStep,
+        canNext: Boolean(accountUrl) && !openingWeb,
+        onNext: openWeb,
+        body: (
+          <View style={styles.block}>
+            <Text style={styles.bigIcon}>🌐</Text>
+            <View style={styles.list}>
+              <Text style={styles.listItem}>1) Enter your Nabu Casa login details.</Text>
+              <Text style={styles.listItem}>2) Scroll down and tap the eye icon to unhide the remote access URL.</Text>
+              <Text style={styles.listItem}>3) Dinodia saves it automatically (it won’t be shown here).</Text>
+            </View>
+            {openingWeb ? (
+              <View style={styles.progressRow}>
+                <ActivityIndicator size="small" color={palette.primary} />
+                <Text style={styles.progressText}>Opening Dinodia Hub…</Text>
+              </View>
+            ) : null}
+            <InlineNotice
+              type="warning"
+              message="Stay on your home Wi‑Fi during this step. Do not share or screenshot the URL."
+            />
+          </View>
+        ),
+      };
+    }
+
+    // step 4
+    const isBusy = status === 'saving' || status === 'testing';
+    const title = verifyState === 'success' ? 'Remote access enabled' : verifyState === 'failed' ? 'Setup incomplete' : 'Enabling remote access';
+    const subtitle =
+      verifyState === 'success'
+        ? 'Cloud mode and Alexa can now work from anywhere.'
+        : verifyState === 'failed'
+        ? 'We saved the link, but verification failed. You can try again.'
+        : 'Saving and verifying your remote access…';
+    return {
+      title,
+      subtitle,
+      showBack: false,
+      showNext: true,
+      nextLabel: 'Close',
+      canNext: !isBusy,
+      onNext: goToDashboard,
+      body: (
+        <View style={styles.block}>
+          {isBusy ? (
+            <View style={styles.progressCenter}>
+              <ActivityIndicator size="large" color={palette.primary} />
+              <Text style={styles.progressText}>
+                {status === 'saving' ? 'Saving remote access…' : 'Testing remote access…'}
+              </Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.bigIcon}>{verifyState === 'success' ? '✅' : verifyState === 'failed' ? '⚠️' : '✅'}</Text>
+              <Text style={styles.bodyText}>{verifyMessage || 'Done.'}</Text>
+              {verifyState === 'failed' ? (
+                <PrimaryButton title="Try again" variant="ghost" onPress={() => setStep(3)} />
+              ) : null}
+            </>
+          )}
+        </View>
+      ),
+    };
+  }, [
+    accountUrl,
+    baseUrl,
+    canProceed,
+    challengeError,
+    checkingHome,
+    clearSensitive,
+    goBackStep,
+    goToDashboard,
+    handleResend,
+    homeReachable,
+    isAdmin,
+    leaseActive,
+    leaseMsLeft,
+    openingWeb,
+    openWeb,
+    refreshHomeReachable,
+    startStepUp,
+    status,
+    step,
+    verifyMessage,
+    verifyState,
+  ]);
+
   return (
     <SafeAreaView style={styles.screen}>
       <TopBar
@@ -731,134 +1149,31 @@ export function RemoteAccessSetupScreen() {
         batteryLevel={batteryLevel}
       />
 
-        <ScrollView contentContainerStyle={styles.container}>
-          {!isHttpsHa && (
-            <View style={styles.warning}>
-              <Text style={styles.warningText}>
-                Using HTTP. Stay on the same Wi‑Fi as your Dinodia Hub while we auto-login and save remote access.
-              </Text>
-            </View>
-          )}
-        <View style={styles.card}>
-          <Text style={styles.title}>Remote Access</Text>
-          <Text style={styles.subtitle}>
-            Remote access setup requires email verification. The remote access link is never shown on this device.
+      {!isHttpsHa ? (
+        <View style={styles.httpNotice}>
+          <Text style={styles.httpNoticeText}>
+            Using HTTP. Stay on the same Wi‑Fi as your Dinodia Hub while we auto-login and save remote access.
           </Text>
-
-          <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Status</Text>
-            <Text style={styles.statusValue}>{cloudEnabled ? 'Saved' : 'Not enabled'}</Text>
-          </View>
-
-          {!canProceed ? (
-            <View style={styles.warning}>
-              <Text style={styles.warningText}>
-                Home mode must be online and connected to the Dinodia Platform to continue.
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.instructions}>
-            <Text style={styles.instructionsTitle}>How this works</Text>
-            <Text style={styles.instructionsItem}>1) Sign into Dinodia Hub.</Text>
-            <Text style={styles.instructionsItem}>
-              2) Go to Cloud account and tap the eye icon to unhide the link.
-            </Text>
-            <Text style={styles.instructionsItem}>
-              3) Dinodia will save the link automatically (it won’t be shown here).
-            </Text>
-          </View>
-
-          {status === 'idle' ? (
-            <PrimaryButton
-              title="Verify email to enable remote access"
-              onPress={startStepUp}
-              disabled={!canProceed}
-            />
-          ) : null}
-
-          {status === 'sending' ? (
-            <View style={styles.progressRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.progressText}>Sending verification email…</Text>
-            </View>
-          ) : null}
-
-          {status === 'waiting' ? (
-            <View style={styles.waitBlock}>
-              <Text style={styles.waitTitle}>Check your email</Text>
-              <Text style={styles.waitText}>
-                Click the verification link, then return here. This unlocks remote access setup for ~10 minutes.
-              </Text>
-              <View style={styles.waitActions}>
-                <PrimaryButton title="Resend email" variant="ghost" onPress={handleResend} />
-                <PrimaryButton
-                  title="Cancel"
-                  variant="danger"
-                  onPress={() => {
-                    clearSensitive();
-                    setStatus('idle');
-                  }}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {status === 'leasing' ? (
-            <View style={styles.progressRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.progressText}>Unlocking setup…</Text>
-            </View>
-          ) : null}
-
-          {status === 'ready' ? (
-            <View style={styles.readyBlock}>
-              <Text style={styles.readyTitle}>Verified</Text>
-              <Text style={styles.readyText}>
-                Continue to Dinodia Hub to connect Nabu Casa. The link will be saved, but not displayed.
-              </Text>
-              <PrimaryButton title="Open Dinodia Hub" onPress={openWeb} />
-              <TouchableOpacity
-                onPress={() => {
-                  clearSensitive();
-                  setStatus('idle');
-                }}
-                style={styles.linkButton}
-              >
-                <Text style={styles.linkButtonText}>Lock again</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {status === 'saving' ? (
-            <View style={styles.progressRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.progressText}>Saving remote access…</Text>
-            </View>
-          ) : null}
-
-          {status === 'testing' ? (
-            <View style={styles.progressRow}>
-              <ActivityIndicator size="small" color={palette.primary} />
-              <Text style={styles.progressText}>Testing remote access…</Text>
-            </View>
-          ) : null}
-
-          {status === 'done' ? (
-            <View style={styles.readyBlock}>
-              <Text style={styles.readyTitle}>
-                {verifyState === 'success' ? 'Remote access enabled' : 'Saved'}
-              </Text>
-              <Text style={styles.readyText}>
-                {verifyMessage ||
-                  'Remote access was saved. You can manage it from the Dinodia Platform if needed.'}
-              </Text>
-            </View>
-          ) : null}
-
-          <InlineNotice message={challengeError} type="error" />
         </View>
-      </ScrollView>
+      ) : null}
+
+      <View style={styles.wizardWrap}>
+        <WizardScaffold
+          title={wizard.title}
+          subtitle={wizard.subtitle}
+          stepLabel={stepLabel}
+          onBack={wizard.onBack}
+          onNext={wizard.onNext}
+          canBack={wizard.canBack ?? true}
+          canNext={wizard.canNext ?? true}
+          nextLabel={wizard.nextLabel}
+          backLabel={wizard.backLabel}
+          showBack={wizard.showBack}
+          showNext={wizard.showNext}
+        >
+          {wizard.body}
+        </WizardScaffold>
+      </View>
 
           <Modal visible={webVisible} animationType="slide" onRequestClose={closeWeb}>
             <SafeAreaView style={styles.webRoot}>
@@ -866,7 +1181,10 @@ export function RemoteAccessSetupScreen() {
                 <Text style={styles.webTitle}>Dinodia Hub</Text>
                 <PrimaryButton title="Close" variant="ghost" onPress={closeWeb} />
               </View>
-              {accountUrl && haCreds ? (
+              {(() => {
+                const creds = haCreds ?? haCredsRef.current;
+                if (!accountUrl || !creds) return null;
+                return (
                 <WebView
                   ref={webRef}
                   key={webKey}
@@ -874,7 +1192,7 @@ export function RemoteAccessSetupScreen() {
                   onShouldStartLoadWithRequest={shouldStartLoad}
                   onMessage={onWebMessage}
                   onNavigationStateChange={onNavStateChange}
-                  injectedJavaScript={buildAutoLoginScript(haCreds.haUsername, haCreds.haPassword)}
+                  injectedJavaScript={buildAutoLoginScript(creds.haUsername, creds.haPassword)}
                   injectedJavaScriptBeforeContentLoaded={injectedJs}
                   javaScriptEnabled
                   domStorageEnabled
@@ -888,16 +1206,17 @@ export function RemoteAccessSetupScreen() {
                     <View style={styles.webLoading}>
                       <ActivityIndicator size="large" color={palette.primary} />
                       <Text style={styles.webLoadingText}>Loading…</Text>
+                    </View>
+                  )}
+                />
+                );
+              })() ?? (
+                <View style={styles.webLoading}>
+                  <Text style={styles.webLoadingText}>Verification required.</Text>
                 </View>
               )}
-            />
-          ) : (
-            <View style={styles.webLoading}>
-              <Text style={styles.webLoadingText}>Verification required.</Text>
-            </View>
-          )}
-        </SafeAreaView>
-      </Modal>
+            </SafeAreaView>
+          </Modal>
       <HeaderMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
@@ -916,57 +1235,32 @@ export function RemoteAccessSetupScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
-  container: {
-    padding: spacing.lg,
-    alignItems: 'center',
-  },
-  card: {
-    width: '100%',
-    maxWidth: maxContentWidth,
-    backgroundColor: palette.surface,
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: palette.outline,
-    padding: spacing.xl,
-    ...shadows.soft,
-    gap: spacing.md,
-  },
-  title: { ...typography.heading },
-  subtitle: { color: palette.textMuted, lineHeight: 20 },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.lg,
-    backgroundColor: palette.surfaceMuted,
-    borderWidth: 1,
-    borderColor: palette.outline,
-  },
-  statusLabel: { color: palette.textMuted, fontWeight: '700' },
-  statusValue: { color: palette.text, fontWeight: '800' },
-  warning: {
-    backgroundColor: '#fff7ed',
-    borderColor: '#fed7aa',
-    borderWidth: 1,
-    borderRadius: radii.lg,
-    padding: spacing.md,
-  },
-  warningText: { color: '#9a3412', fontWeight: '700' },
-  instructions: {
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.outline,
-    backgroundColor: palette.surfaceMuted,
-    padding: spacing.md,
-    gap: 4,
-  },
-  instructionsTitle: { fontWeight: '800', color: palette.text },
-  instructionsItem: { color: palette.textMuted, lineHeight: 18 },
   progressRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   progressText: { color: palette.textMuted, fontWeight: '700' },
-  waitBlock: {
+  wizardWrap: {
+    flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
+    maxWidth: maxContentWidth + 80,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  httpNotice: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  httpNoticeText: { color: '#9a3412', fontWeight: '700' },
+  block: { flex: 1, gap: spacing.md },
+  bigIcon: { fontSize: 52, textAlign: 'center', marginBottom: spacing.sm },
+  bodyText: { color: palette.text, lineHeight: 22, fontSize: 16, textAlign: 'center' },
+  list: { gap: 8 },
+  listItem: { color: palette.textMuted, lineHeight: 20, fontSize: 15 },
+  panel: {
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: palette.outline,
@@ -974,10 +1268,10 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
   },
-  waitTitle: { color: palette.text, fontWeight: '800', fontSize: 16 },
-  waitText: { color: palette.textMuted, lineHeight: 20 },
-  waitActions: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
-  readyBlock: {
+  panelTitle: { color: palette.text, fontWeight: '800', fontSize: 16 },
+  panelText: { color: palette.textMuted, lineHeight: 20 },
+  panelActions: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
+  successPanel: {
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: '#bbf7d0',
@@ -985,11 +1279,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
   },
-  readyTitle: { color: '#166534', fontWeight: '900', fontSize: 16 },
-  readyText: { color: '#14532d', lineHeight: 20 },
-  linkButton: { alignSelf: 'flex-start', paddingVertical: 6 },
-  linkButtonText: { color: palette.textMuted, fontWeight: '700' },
-  errorText: { color: palette.danger, fontWeight: '700' },
+  successTitle: { color: '#166534', fontWeight: '900', fontSize: 16 },
+  successText: { color: '#14532d', lineHeight: 20 },
+  progressCenter: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, flex: 1 },
   webRoot: { flex: 1, backgroundColor: palette.background },
   webHeader: {
     flexDirection: 'row',

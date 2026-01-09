@@ -87,6 +87,7 @@ export function AutomationsListScreen({}: Props) {
 
   const handleDelete = useCallback(
     (id: string) => {
+      if (isAdmin) return;
       Alert.alert('Delete automation', 'Are you sure you want to delete this automation?', [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -103,7 +104,7 @@ export function AutomationsListScreen({}: Props) {
         },
       ]);
     },
-    [haMode, refresh, session.haConnection]
+    [haMode, isAdmin, refresh, session.haConnection]
   );
 
   const switchMode = useCallback(
@@ -227,12 +228,19 @@ export function AutomationsListScreen({}: Props) {
               <Text style={styles.title}>Automations</Text>
               <Text style={styles.subtitle}>Scenes that keep your place effortless.</Text>
             </View>
-            <PrimaryButton
-              title="+ Add"
-              onPress={() => navigation.navigate('AutomationEditor' as never)}
-              style={styles.addButton}
-            />
+            {!isAdmin && (
+              <PrimaryButton
+                title="+ Add"
+                onPress={() => navigation.navigate('AutomationEditor' as never)}
+                style={styles.addButton}
+              />
+            )}
           </View>
+          {isAdmin && (
+            <Text style={styles.readOnlyNote}>
+              Homeowners can view automations but cannot create or delete.
+            </Text>
+          )}
 
           <View style={styles.filterRow}>
             <Text style={styles.filterLabel}>Device / Entity</Text>
@@ -325,11 +333,13 @@ export function AutomationsListScreen({}: Props) {
                           {action}
                         </Text>
                       </View>
-                      <View style={styles.itemActions}>
-                        <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
-                          <Text style={styles.deleteText}>Delete</Text>
-                        </TouchableOpacity>
-                      </View>
+                      {!isAdmin && (
+                        <View style={styles.itemActions}>
+                          <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
+                            <Text style={styles.deleteText}>Delete</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   );
                 }}
@@ -455,6 +465,7 @@ const styles = StyleSheet.create({
   },
   title: { ...typography.heading },
   subtitle: { color: palette.textMuted, marginTop: 4, fontSize: 13 },
+  readOnlyNote: { color: '#b45309', marginTop: 2, fontSize: 12 },
   addButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   filterRow: { marginTop: spacing.md, gap: spacing.xs },
   filterLabel: { fontSize: 12, fontWeight: '700', color: palette.textMuted, marginBottom: 2 },
