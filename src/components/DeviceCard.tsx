@@ -390,6 +390,10 @@ function getSecondaryLine(device: UIDevice): string {
     const active = ['on', 'motion', 'detected', 'open'].includes(state.toLowerCase());
     return active ? 'Motion detected' : 'No motion';
   }
+  if (label === 'Sockets') {
+    const unit = typeof attrs.unit_of_measurement === 'string' ? attrs.unit_of_measurement : '';
+    return unit ? `${state} ${unit}`.trim() : (state || 'No data');
+  }
   return state || 'Unknown';
 }
 

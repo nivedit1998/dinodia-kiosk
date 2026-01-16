@@ -401,6 +401,11 @@ export const CAPABILITIES: Record<string, DeviceCapability> = {
       },
     ],
   },
+  Sockets: {
+    actions: [],
+    triggers: [],
+    excludeFromAutomations: true,
+  },
   Spotify: {
     actions: [
       {

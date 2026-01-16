@@ -60,6 +60,14 @@ const PRESETS: Record<string, DeviceVisualPreset> = {
     iconInactiveBackground: '#fed7aa',
     accent: ['#fb923c', '#fdba74'],
   },
+  Sockets: {
+    gradient: ['#e5e7eb', '#f8fafc'],
+    inactiveBackground: '#f8fafc',
+    icon: '🔌',
+    iconActiveBackground: '#0f172a',
+    iconInactiveBackground: '#e2e8f0',
+    accent: ['#0f172a', '#94a3b8'],
+  },
   Doorbell: {
     gradient: ['#ffedd5', '#fbbf24'],
     inactiveBackground: '#fff8e1',
@@ -114,6 +122,11 @@ export function isDeviceActive(label: string | null | undefined, device: UIDevic
     case 'Doorbell':
     case 'Boiler':
       return true;
+    case 'Sockets': {
+      const numeric = Number(state);
+      if (!Number.isNaN(numeric)) return numeric > 0;
+      return state === 'on';
+    }
     case 'Motion Sensor':
       return activeForMotion.includes(state);
     default:

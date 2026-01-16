@@ -7,6 +7,7 @@ const PRIMARY_CATEGORIES = new Set([
   'tv',
   'speaker',
   'boiler',
+  'sockets',
   'spotify',
   'switch',
   'thermostat',
